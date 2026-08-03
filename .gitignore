@@ -1,0 +1,48 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+.venv/
+*.egg-info/
+dist/
+build/
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Environment
+.env
+.env.local
+
+# Data
+data/
+*.db
+
+# Node
+node_modules/
+dist/
+*.local
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+logs/
+
+# Frontend build
+frontend/dist/
+
+# SDK build
+sdk/dist/
