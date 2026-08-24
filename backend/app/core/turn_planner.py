@@ -73,7 +73,11 @@ async def plan_turn(
 ) -> TurnPlan:
     classified = classify_user_input(message, conversation_state)
     effective_message = classified.effective_message or message
-    direct_response = resolve_intent_response(classified.intent, extract_user_input(message))
+    direct_response = (
+        resolve_intent_response(classified.intent, extract_user_input(message))
+        if classified.action != InputAction.ROUTE
+        else None
+    )
 
     if direct_response is not None:
         high_risk = classified.intent == InputIntent.HIGH_RISK_CLINICAL_ACTION

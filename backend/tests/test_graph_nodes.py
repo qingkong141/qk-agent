@@ -1,6 +1,7 @@
 ﻿import pytest
 
 from app.core.input_intent import (
+    InputAction,
     is_capability_clarification_for_doctor,
     is_doctor_capability_query,
     is_high_risk_clinical_action,
@@ -208,25 +209,16 @@ async def test_medical_staff_capability_response_is_not_emergency_rag(monkeypatc
 
 
 @pytest.mark.asyncio
-async def test_unknown_short_topic_clarifies_without_rag_sources(monkeypatch):
-    async def fake_log_usage(*args, **kwargs):
-        return None
+async def test_unknown_short_topic_routes_normally(monkeypatch):
+    async def general_router(message):
+        return "general"
 
-    monkeypatch.setattr("app.graph.nodes.log_usage", fake_log_usage)
+    monkeypatch.setattr("app.core.turn_planner._classify_workflow_intent", general_router)
     plan = await plan_turn("拉布布")
-    result = await response_agent_node({
-        "turn_plan": plan.model_dump(mode="json"),
-        "user_input": "拉布布",
-        "intent": "general",
-        "agent_result": "",
-        "kb_hit": False,
-        "sources": [{"source": "医疗急救小常识.pdf"}],
-        "user_id": "test-user",
-    })
 
-    assert result["kb_hit"] is False
-    assert result["sources"] == []
-    assert result["final_output"] == "你想了解“拉布布”的哪方面？可以补充一下具体问题。"
+    assert plan.action == InputAction.ROUTE
+    assert plan.needs_user_input is False
+    assert plan.direct_response is None
 
 
 @pytest.mark.asyncio

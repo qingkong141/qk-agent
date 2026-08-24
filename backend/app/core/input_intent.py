@@ -277,15 +277,13 @@ def classify_user_input(message: str, conversation_state: dict | None = None) ->
         )
     if is_social_expression(message):
         return InputIntentResult(InputIntent.GENERAL, allow_rag=False)
-    if is_short_clarification_reply(message):
-        pending_turn = conversation_state.get("needs_user_input")
-        if pending_turn:
-            return InputIntentResult(
-                InputIntent.SHORT_CLARIFICATION,
-                allow_rag=False,
-                action=InputAction.ROUTE,
-                effective_message=build_clarification_message(pending_turn, message),
-                clarified_from=pending_turn.get("assistant_message_id"),
-            )
-        return InputIntentResult(InputIntent.SHORT_CLARIFICATION, allow_rag=False, action=InputAction.CLARIFY)
+    pending_turn = conversation_state.get("needs_user_input")
+    if pending_turn and is_short_clarification_reply(message):
+        return InputIntentResult(
+            InputIntent.SHORT_CLARIFICATION,
+            allow_rag=False,
+            action=InputAction.ROUTE,
+            effective_message=build_clarification_message(pending_turn, message),
+            clarified_from=pending_turn.get("assistant_message_id"),
+        )
     return InputIntentResult(InputIntent.GENERAL, allow_rag=True)

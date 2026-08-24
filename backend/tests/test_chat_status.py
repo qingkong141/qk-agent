@@ -160,7 +160,8 @@ def test_clarification_message_binds_short_reply_to_previous_question():
     ("医疗急救", InputIntent.UNDERSPECIFIED_MEDICAL, False),
     ("调整滴速", InputIntent.HIGH_RISK_CLINICAL_ACTION, False),
     ("大师的撒刷到撒旦", InputIntent.UNCLEAR_INPUT, False),
-    ("Python", InputIntent.SHORT_CLARIFICATION, False),
+    ("Python", InputIntent.GENERAL, True),
+    ("你是谁", InputIntent.GENERAL, True),
     ("窒息怎么急救", InputIntent.GENERAL, True),
 ])
 def test_classify_user_input_returns_intent_and_rag_policy(text, intent, allow_rag):
@@ -252,3 +253,12 @@ def test_classify_short_unknown_topic_binds_to_pending_clarification():
     assert result.clarified_from == "assistant-3"
     assert result.effective_message is not None
     assert "用户现在补充：Python" in result.effective_message
+
+
+@pytest.mark.parametrize("text", ["你是谁", "他是谁", "你在哪", "选哪个", "多少钱", "几点了", "能不能用"])
+def test_standalone_short_requests_route_as_general_input(text):
+    result = classify_user_input(text)
+
+    assert result.intent == InputIntent.GENERAL
+    assert result.action == InputAction.ROUTE
+    assert result.allow_rag is True

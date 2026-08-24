@@ -53,11 +53,36 @@ async def test_semantic_knowledge_plan_is_the_only_way_to_enable_rag(monkeypatch
 
 
 @pytest.mark.asyncio
-async def test_clarification_status_is_structured_not_inferred_from_text():
+async def test_short_topic_without_pending_clarification_routes_normally(monkeypatch):
+    async def general_router(message):
+        return "general"
+
+    monkeypatch.setattr("app.core.turn_planner._classify_workflow_intent", general_router)
     plan = await plan_turn("拉布布")
 
-    assert plan.needs_user_input is True
-    assert plan.direct_response
+    assert plan.action == InputAction.ROUTE
+    assert plan.needs_user_input is False
+    assert plan.direct_response is None
+
+
+@pytest.mark.asyncio
+async def test_pending_short_clarification_routes_with_context(monkeypatch):
+    async def general_router(message):
+        assert "用户现在补充：Python" in message
+        return "general"
+
+    monkeypatch.setattr("app.core.turn_planner._classify_workflow_intent", general_router)
+    plan = await plan_turn("Python", {
+        "needs_user_input": {
+            "assistant_message_id": "assistant-3",
+            "user_message": "你会什么",
+            "assistant_prompt": "请问您现在需要了解哪个方面的信息呢？",
+        },
+    })
+
+    assert plan.action == InputAction.ROUTE
+    assert plan.clarified_from == "assistant-3"
+    assert plan.direct_response is None
 
 
 @pytest.mark.asyncio
