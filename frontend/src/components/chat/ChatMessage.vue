@@ -4,6 +4,15 @@
     <div class="bubble">
       <div v-if="message.agentName" class="agent-badge">{{ message.agentName }}</div>
       <div v-if="message.toolName" class="tool-badge">{{ message.toolName }}</div>
+      <div v-if="message.status === 'needs_user_input' && !message.streaming" class="status-badge">
+        等待补充
+      </div>
+      <div v-if="message.status === 'interrupted'" class="status-badge interrupted">
+        已停止，可继续
+      </div>
+      <div v-if="message.status === 'cancelled'" class="status-badge cancelled">
+        已取消
+      </div>
       <div class="content" v-html="rendered" />
       <span v-if="message.streaming" class="cursor">|</span>
       <SourceCitation v-if="message.sources?.length && !message.streaming" :sources="message.sources" />
@@ -94,6 +103,18 @@ const rendered = computed(() => {
   font-size: 11px;
   color: #63e2b7;
   margin-bottom: 4px;
+}
+.status-badge {
+  display: inline-block;
+  font-size: 11px;
+  color: #f2c97d;
+  margin-bottom: 4px;
+}
+.status-badge.interrupted {
+  color: #d03050;
+}
+.status-badge.cancelled {
+  color: #888;
 }
 .cursor {
   animation: blink 1s infinite;

@@ -8,6 +8,11 @@ from app.core.context import get_request_context
 from app.services.usage_tracker import estimate_tokens, log_usage
 
 
+TOOL_POLICIES = {
+    "confirm_education_push": "approval_required",
+}
+
+
 class ToolManager:
     """工具管理器：注册、查询、获取 LangChain Tool 列表"""
 
@@ -20,12 +25,43 @@ class ToolManager:
         return cls._instance
 
     def register(self, t: StructuredTool):
-        original_func = t.func
+        original_func = t.coroutine or t.func
         tool_name = t.name
 
         async def wrapped(*args, **kwargs):
             start = time.time()
             try:
+                policy = TOOL_POLICIES.get(tool_name, "allowed")
+                if policy == "approval_required":
+                    from app.db.session import async_session
+                    from app.services.runtime_state import consume_tool_approval, request_tool_approval
+
+                    ctx = get_request_context()
+                    arguments = dict(kwargs)
+                    if args:
+                        arguments["_args"] = list(args)
+                    required = ("user_id", "conversation_id")
+                    if any(not ctx.get(field) for field in required):
+                        return "该工具需要在已认证的会话中执行。"
+                    async with async_session() as db:
+                        approval_state = "denied"
+                        if ctx.get("approval_id"):
+                            approval_state = await consume_tool_approval(
+                                db, approval_id=ctx["approval_id"], owner_id=ctx["user_id"],
+                                external_user_id=ctx.get("external_user_id", ""),
+                                conversation_id=ctx["conversation_id"], tool_name=tool_name,
+                                arguments=arguments,
+                            )
+                        if approval_state == "already_consumed":
+                            return "该审批对应的操作已经执行，不会重复执行。"
+                        if approval_state != "execute":
+                            approval = await request_tool_approval(
+                                db, owner_id=ctx["user_id"],
+                                external_user_id=ctx.get("external_user_id", ""),
+                                conversation_id=ctx["conversation_id"], run_id=ctx.get("run_id"),
+                                tool_name=tool_name, arguments=arguments,
+                            )
+                            return f"该操作需要明确审批，approval_id: {approval.id}"
                 if asyncio.iscoroutinefunction(original_func):
                     result = await original_func(*args, **kwargs)
                 else:

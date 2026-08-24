@@ -13,6 +13,10 @@ class WorkflowState(TypedDict):
     chat_history: list[BaseMessage]
     user_id: str
     workspace: str
+    agent_prompt: str
+    agent_tools: list[str] | None
+    turn_plan: dict
+    response_status: str
     intent: str
     agent_result: str
     kb_hit: bool

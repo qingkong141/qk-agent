@@ -4,8 +4,10 @@ from fastapi import APIRouter, Depends
 
 from app.clinical.context_extractor import extract_clinical_context
 from app.dependencies import CurrentUser
+from app.core.context import set_request_context
 from app.schemas.clinical import ClinicalEventRequest, ClinicalEventResponse
 from app.services.clinical_decision_service import create_decision
+from app.services.conversation_access import conversation_external_user_id
 
 router = APIRouter(prefix="/clinical-events", tags=["clinical-events"])
 
@@ -40,6 +42,12 @@ async def receive_clinical_event(
     - lab_result: 检验结果 → 宣教推荐
     - prescription_new: 新处方 → 用药指导
     """
+    set_request_context(
+        user["id"], user.get("workspace", "default"),
+        external_user_id=conversation_external_user_id(user),
+        conversation_id=data.conversation_id or "",
+    )
+    idempotency_key = (data.metadata or {}).get("idempotency_key")
     agent = _get_event_agent(data.event_type)
 
     if agent is None:
@@ -55,6 +63,7 @@ async def receive_clinical_event(
             action_params={"items": [], "event_type": data.event_type},
             safety_level="low",
             conversation_id=data.conversation_id,
+            idempotency_key=idempotency_key,
         )
         return ClinicalEventResponse(
             decision_id=decision.id,
@@ -91,6 +100,7 @@ async def receive_clinical_event(
         extracted_info=analyzed.get("extracted_info"),
         safety_level=safety["level"],
         conversation_id=data.conversation_id,
+        idempotency_key=idempotency_key,
     )
 
     # TODO: 如果有活跃的 conversation_id，注入系统消息到对话

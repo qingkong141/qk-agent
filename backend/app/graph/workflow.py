@@ -33,6 +33,7 @@ def build_workflow():
         "supervisor",
         route_intent,
         {
+            "response": "response_agent",
             "knowledge_query": "kb_agent",
             "calculation": "calc_agent",
             "general": "response_agent",

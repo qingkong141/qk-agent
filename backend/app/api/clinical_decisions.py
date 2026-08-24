@@ -20,6 +20,7 @@ from app.services.clinical_decision_service import (
     list_decisions,
     skip_items,
 )
+from app.services.conversation_access import conversation_external_user_id
 
 router = APIRouter(prefix="/clinical/decisions", tags=["clinical-decisions"])
 
@@ -31,7 +32,7 @@ async def get_clinical_decision_report(
     user: CurrentUser,
 ):
     """返回只包含已记录事实的临床决策审计报告。"""
-    decision = await get_decision(decision_id)
+    decision = await get_decision(decision_id, user["id"], conversation_external_user_id(user))
     if not decision:
         raise HTTPException(status_code=404, detail="决策不存在")
     return ClinicalDecisionReport(**build_decision_report(decision))
@@ -54,6 +55,8 @@ async def list_clinical_decisions(
         patient_id=patient_id,
         limit=limit,
         offset=offset,
+        owner_id=user["id"],
+        external_user_id=conversation_external_user_id(user),
     )
     return DecisionListResponse(
         items=[
@@ -80,7 +83,7 @@ async def confirm_clinical_decision(
     user: CurrentUser,
 ):
     """确认并执行决策中的指定条目。支持部分确认。"""
-    decision = await get_decision(decision_id)
+    decision = await get_decision(decision_id, user["id"], conversation_external_user_id(user))
     if not decision:
         raise HTTPException(status_code=404, detail="决策不存在")
     if decision.status not in ("pending", "partial"):
@@ -93,6 +96,8 @@ async def confirm_clinical_decision(
         decision_id,
         data.selected_ids,
         confirmed_by=user["id"],
+        owner_id=user["id"],
+        external_user_id=conversation_external_user_id(user),
     )
 
     # 2. 根据 action_type 调用对应业务系统的执行接口
@@ -115,13 +120,16 @@ async def skip_clinical_decision_items(
     user: CurrentUser,
 ):
     """跳过决策中的指定条目"""
-    decision = await get_decision(decision_id)
+    decision = await get_decision(decision_id, user["id"], conversation_external_user_id(user))
     if not decision:
         raise HTTPException(status_code=404, detail="决策不存在")
     if decision.status not in ("pending", "partial"):
         raise HTTPException(status_code=400, detail=f"决策状态为 {decision.status}，不可操作")
 
-    result = await skip_items(decision_id, data.skip_ids)
+    result = await skip_items(
+        decision_id, data.skip_ids, owner_id=user["id"],
+        external_user_id=conversation_external_user_id(user),
+    )
     return DecisionActionResponse(**result)
 
 
@@ -132,11 +140,14 @@ async def cancel_clinical_decision(
     user: CurrentUser,
 ):
     """取消整个决策（所有 pending 条目标记为 skipped）"""
-    decision = await get_decision(decision_id)
+    decision = await get_decision(decision_id, user["id"], conversation_external_user_id(user))
     if not decision:
         raise HTTPException(status_code=404, detail="决策不存在")
     if decision.status not in ("pending", "partial"):
         raise HTTPException(status_code=400, detail=f"决策状态为 {decision.status}，不可取消")
 
-    result = await cancel_decision(decision_id)
+    result = await cancel_decision(
+        decision_id, owner_id=user["id"],
+        external_user_id=conversation_external_user_id(user),
+    )
     return DecisionActionResponse(**result)

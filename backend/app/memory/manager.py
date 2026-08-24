@@ -2,7 +2,12 @@ from langchain_core.messages import BaseMessage
 from sqlalchemy import delete
 
 from app.db.session import async_session
-from app.memory.history import load_chat_messages, save_chat_messages
+from app.memory.history import (
+    get_last_interrupted_turn,
+    get_last_needs_user_input_turn,
+    load_chat_messages,
+    save_chat_messages,
+)
 from app.models.conversation import Message
 
 
@@ -19,13 +24,25 @@ class MemoryManager:
         ai_content: str,
         *,
         sources: list[dict] | None = None,
+        status: str = "completed",
+        run_id: str | None = None,
+        metadata: dict | None = None,
     ) -> None:
         await save_chat_messages(
             conversation_id,
             human_content,
             ai_content,
             sources=sources,
+            status=status,
+            run_id=run_id,
+            metadata=metadata,
         )
+
+    async def get_last_interrupted_turn(self, conversation_id: str) -> dict | None:
+        return await get_last_interrupted_turn(conversation_id)
+
+    async def get_last_needs_user_input_turn(self, conversation_id: str) -> dict | None:
+        return await get_last_needs_user_input_turn(conversation_id)
 
     async def clear(self, conversation_id: str) -> None:
         async with async_session() as db:

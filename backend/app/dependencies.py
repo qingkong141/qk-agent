@@ -1,4 +1,4 @@
-from typing import Annotated, Optional
+from typing import Annotated, Optional, TypedDict
 
 from fastapi import Depends, Header, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
@@ -13,37 +13,66 @@ from app.models.user import User
 security = HTTPBearer(auto_error=False)
 
 
-async def get_current_user(
-    credentials: Annotated[Optional[HTTPAuthorizationCredentials], Depends(security)],
-    db: Annotated[AsyncSession, Depends(get_db)],
-    x_api_key: Annotated[Optional[str], Header(alias="X-API-Key")] = None,
-) -> dict:
-    """JWT 或 API Key 双模式认证"""
-    if x_api_key:
+class Principal(TypedDict):
+    id: str
+    email: str
+    auth_type: str
+    workspace: str
+    external_user_id: str
+
+
+async def authenticate_principal(
+    db: AsyncSession,
+    *,
+    bearer_token: str | None = None,
+    api_key: str | None = None,
+    end_user_id: str | None = None,
+) -> Principal:
+    if api_key:
         result = await db.execute(
-            select(User).where(User.api_key == x_api_key, User.is_active.is_(True))
+            select(User).where(User.api_key == api_key, User.is_active.is_(True))
         )
         user = result.scalar_one_or_none()
         if not user:
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="无效的 API Key")
-        return {
-            "id": user.id,
-            "email": user.email,
-            "auth_type": "api_key",
-            "workspace": "default",
-        }
-
-    if not credentials:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="未提供认证凭据")
-
-    try:
-        payload = jwt.decode(credentials.credentials, settings.SECRET_KEY, algorithms=["HS256"])
-        user_id: str = payload.get("sub")
-        if user_id is None:
+        auth_type = "api_key"
+    else:
+        if not bearer_token:
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="未提供认证凭据")
+        try:
+            payload = jwt.decode(bearer_token, settings.SECRET_KEY, algorithms=["HS256"])
+            user_id = payload.get("sub")
+        except JWTError as exc:
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="无效令牌") from exc
+        if not user_id:
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="无效令牌")
-        return {"id": user_id, "auth_type": "jwt", "workspace": "default"}
-    except JWTError:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="无效令牌")
+        user = await db.get(User, user_id)
+        if not user or not user.is_active:
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="无效令牌")
+        auth_type = "jwt"
+
+    return {
+        "id": user.id,
+        "email": user.email,
+        "auth_type": auth_type,
+        "workspace": "default",
+        "external_user_id": end_user_id.strip() if auth_type == "api_key" and end_user_id else "",
+    }
+
+
+async def get_current_user(
+    credentials: Annotated[Optional[HTTPAuthorizationCredentials], Depends(security)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+    x_api_key: Annotated[Optional[str], Header(alias="X-API-Key")] = None,
+    x_end_user_id: Annotated[Optional[str], Header(alias="X-End-User-ID")] = None,
+) -> dict:
+    """JWT 或 API Key 双模式认证"""
+    return await authenticate_principal(
+        db,
+        bearer_token=credentials.credentials if credentials else None,
+        api_key=x_api_key,
+        end_user_id=x_end_user_id,
+    )
 
 
 CurrentUser = Annotated[dict, Depends(get_current_user)]

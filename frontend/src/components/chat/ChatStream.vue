@@ -26,6 +26,8 @@ const { messages } = storeToRefs(chatStore)
 const convStore = useConversationStore()
 const auth = useAuthStore()
 const containerRef = ref<HTMLElement>()
+const pendingSend = ref<{ message: string; agentId?: string | null } | null>(null)
+let cancelFallbackTimer: ReturnType<typeof setTimeout> | null = null
 
 function scrollToBottom() {
   nextTick(() => {
@@ -42,7 +44,10 @@ const { send, open, close } = useWebSocket(wsUrl, {
   immediate: false,
   autoReconnect: false,
   onMessage(_ws, event) {
-    const msg = JSON.parse(event.data)
+      const msg = JSON.parse(event.data)
+    if (msg.type === 'interrupted' || msg.type === 'cancelled' || msg.type === 'done' || msg.type === 'error') {
+      clearCancelFallback()
+    }
     if (msg.type === 'token') {
       chatStore.appendToLast(msg.data)
       scrollToBottom()
@@ -59,12 +64,26 @@ const { send, open, close } = useWebSocket(wsUrl, {
         chatStore.stageSources(sources)
         chatStore.attachSourcesToLastAssistant(sources)
       }
-      chatStore.finishLastAssistant(output)
+      chatStore.finishLastAssistant(output, msg.data?.status ?? 'completed', sources)
       window.dispatchEvent(new CustomEvent('conversation-updated'))
+      close()
       scrollToBottom()
+      flushPendingSend()
     } else if (msg.type === 'error') {
       chatStore.stageSources([])
       chatStore.finishLastAssistant(`错误: ${msg.data?.message ?? '未知错误'}`)
+      close()
+      flushPendingSend()
+    } else if (msg.type === 'interrupted') {
+      chatStore.interruptLastAssistant(msg.data?.partial_output)
+      close()
+      scrollToBottom()
+      flushPendingSend()
+    } else if (msg.type === 'cancelled') {
+      chatStore.cancelLastAssistant()
+      close()
+      scrollToBottom()
+      flushPendingSend()
     }
   },
 })
@@ -77,7 +96,17 @@ watch(
 )
 
 async function handleSend(e: Event) {
-  const { message } = (e as CustomEvent).detail
+  const { message, agentId } = (e as CustomEvent).detail
+  if (chatStore.isStreaming) {
+    pendingSend.value = { message, agentId }
+    send(JSON.stringify({ type: 'cancel', session_id: convStore.currentId }))
+    return
+  }
+  await startChat(message, agentId)
+}
+
+async function startChat(message: string, agentId?: string | null) {
+  close()
   if (!convStore.currentId) {
     await convStore.create()
   }
@@ -100,18 +129,54 @@ async function handleSend(e: Event) {
   send(JSON.stringify({
     type: 'chat',
     message,
+    agent_id: agentId,
     session_id: convStore.currentId,
-    use_workflow: chatStore.useWorkflow,
-    user_id: auth.userId || 'anonymous',
+    execution_strategy: 'auto',
+    access_token: auth.token,
   }))
+}
+
+function flushPendingSend() {
+  const next = pendingSend.value
+  if (!next) return
+  pendingSend.value = null
+  nextTick(() => {
+    startChat(next.message, next.agentId)
+  })
+}
+
+function handleCancel() {
+  if (!chatStore.isStreaming) return
+  pendingSend.value = null
+  send(JSON.stringify({ type: 'cancel', session_id: convStore.currentId }))
+  scheduleCancelFallback()
+}
+
+function scheduleCancelFallback() {
+  clearCancelFallback()
+  cancelFallbackTimer = setTimeout(() => {
+    if (!chatStore.isStreaming) return
+    chatStore.interruptLastAssistant()
+    close()
+  }, 1500)
+}
+
+function clearCancelFallback() {
+  if (cancelFallbackTimer) {
+    clearTimeout(cancelFallbackTimer)
+    cancelFallbackTimer = null
+  }
 }
 
 onMounted(() => {
   window.addEventListener('chat-send', handleSend)
+  window.addEventListener('chat-cancel', handleCancel)
 })
 
 onUnmounted(() => {
+  clearCancelFallback()
   window.removeEventListener('chat-send', handleSend)
+  window.removeEventListener('chat-cancel', handleCancel)
 })
 </script>
 

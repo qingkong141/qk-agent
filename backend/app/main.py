@@ -10,7 +10,7 @@ from slowapi.middleware import SlowAPIMiddleware
 
 from app.api import (
     agents, auth, chat, clinical_decisions, clinical_events,
-    context, conversations, documents, monitor, tools, workflows,
+    context, conversations, documents, monitor, runtime, tools, workflows,
 )
 from app.config import settings
 from app.core.exceptions import (
@@ -20,7 +20,7 @@ from app.core.exceptions import (
 )
 from app.core.langsmith_setup import setup_langsmith
 from app.core.logging_setup import setup_logging
-from app.db.session import init_db, ensure_schema_patches, ensure_schema_patches
+from app.db.session import ensure_schema_patches, init_db
 from app.middleware.rate_limit import limiter
 from app.llm.ollama_health import check_ollama_health
 from app.tools import register_default_tools
@@ -86,6 +86,7 @@ app.include_router(monitor.router, prefix=prefix)
 app.include_router(workflows.router, prefix=prefix)
 app.include_router(clinical_decisions.router, prefix=prefix)
 app.include_router(clinical_events.router, prefix=prefix)
+app.include_router(runtime.router, prefix=prefix)
 
 
 @app.get("/health")

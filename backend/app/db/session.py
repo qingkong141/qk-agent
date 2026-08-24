@@ -44,7 +44,66 @@ async def ensure_schema_patches() -> None:
     from sqlalchemy import text
 
     async with engine.begin() as conn:
+        conversation_result = await conn.execute(text("PRAGMA table_info(conversations)"))
+        conversation_columns = {row[1] for row in conversation_result.fetchall()}
+        if "external_user_id" not in conversation_columns:
+            await conn.execute(text(
+                "ALTER TABLE conversations ADD COLUMN external_user_id VARCHAR(255) DEFAULT '' NOT NULL"
+            ))
+        await conn.execute(text(
+            "CREATE INDEX IF NOT EXISTS ix_conversations_external_user_id "
+            "ON conversations (external_user_id)"
+        ))
+
         result = await conn.execute(text("PRAGMA table_info(messages)"))
         columns = {row[1] for row in result.fetchall()}
         if "sources" not in columns:
             await conn.execute(text("ALTER TABLE messages ADD COLUMN sources JSON"))
+        if "status" not in columns:
+            await conn.execute(text("ALTER TABLE messages ADD COLUMN status VARCHAR(20) DEFAULT 'completed' NOT NULL"))
+        if "message_metadata" not in columns:
+            await conn.execute(text("ALTER TABLE messages ADD COLUMN message_metadata JSON"))
+        await conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS agent_runs (
+                id VARCHAR(36) PRIMARY KEY,
+                conversation_id VARCHAR(36) NOT NULL,
+                user_message_id VARCHAR(36),
+                assistant_message_id VARCHAR(36),
+                status VARCHAR(20) DEFAULT 'running' NOT NULL,
+                run_metadata JSON,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY(conversation_id) REFERENCES conversations (id),
+                FOREIGN KEY(user_message_id) REFERENCES messages (id),
+                FOREIGN KEY(assistant_message_id) REFERENCES messages (id)
+            )
+        """))
+        await conn.execute(text(
+            "CREATE INDEX IF NOT EXISTS ix_agent_runs_conversation_id ON agent_runs (conversation_id)"
+        ))
+
+        clinical_result = await conn.execute(text("PRAGMA table_info(clinical_decisions)"))
+        clinical_columns = {row[1] for row in clinical_result.fetchall()}
+        if "owner_id" not in clinical_columns:
+            await conn.execute(text(
+                "ALTER TABLE clinical_decisions ADD COLUMN owner_id VARCHAR(36) DEFAULT '' NOT NULL"
+            ))
+        if "external_user_id" not in clinical_columns:
+            await conn.execute(text(
+                "ALTER TABLE clinical_decisions ADD COLUMN external_user_id VARCHAR(255) DEFAULT '' NOT NULL"
+            ))
+        if "idempotency_key" not in clinical_columns:
+            await conn.execute(text(
+                "ALTER TABLE clinical_decisions ADD COLUMN idempotency_key VARCHAR(128) DEFAULT '' NOT NULL"
+            ))
+            await conn.execute(text(
+                "UPDATE clinical_decisions SET idempotency_key = id WHERE idempotency_key = ''"
+            ))
+        if "version" not in clinical_columns:
+            await conn.execute(text(
+                "ALTER TABLE clinical_decisions ADD COLUMN version INTEGER DEFAULT 0 NOT NULL"
+            ))
+        await conn.execute(text(
+            "CREATE UNIQUE INDEX IF NOT EXISTS uq_clinical_decision_idempotency "
+            "ON clinical_decisions (owner_id, external_user_id, idempotency_key)"
+        ))

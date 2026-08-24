@@ -32,6 +32,7 @@ export class AgentSDK {
         ...(options.headers as Record<string, string>),
       }
       if (this.config.apiKey) headers['X-API-Key'] = this.config.apiKey
+      if (this.config.apiKey && this.config.endUserId) headers['X-End-User-ID'] = this.config.endUserId
       if (this.config.token) headers['Authorization'] = `Bearer ${this.config.token}`
 
       const response = await fetchWithRetry(

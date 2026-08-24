@@ -37,7 +37,7 @@ httpx>=0.27.0
 
 # 文档处理
 pypdf>=4.2.0
-pdfplumber>=0.11.0
+pdfplumber==0.11.4
 docx2txt>=0.8
 
 # 开发

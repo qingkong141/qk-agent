@@ -63,7 +63,7 @@ export class StreamHandler implements StreamSubscription {
       try {
         const msg: StreamEvent = JSON.parse(event.data as string)
         this.emit(msg.type, msg.data)
-        if (msg.type === 'done') {
+        if (msg.type === 'done' || msg.type === 'interrupted' || msg.type === 'cancelled') {
           this.finished = true
           this.clearTimeout()
           this.ws?.close()
@@ -94,6 +94,12 @@ export class StreamHandler implements StreamSubscription {
   }
 
   cancel(): void {
+    if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+      this.ws.send(JSON.stringify({ type: 'cancel', session_id: this.payload.session_id }))
+      this.cancelled = true
+      this.clearTimeout()
+      return
+    }
     this.cancelled = true
     this.finished = true
     this.clearTimeout()
@@ -133,14 +139,13 @@ export function createStreamHandler(
   conversationId: string,
   options: {
     message: string
+    agentId?: string
     context?: Record<string, unknown>
-    workspace?: string
-    useWorkflow?: boolean
-    userId?: string
     maxRetries?: number
     timeoutMs?: number
+    approvalId?: string
   },
-  auth: { apiKey?: string; token?: string },
+  auth: { apiKey?: string; token?: string; endUserId?: string },
 ): StreamHandler {
   const wsBase = baseUrl.replace(/^http/, 'ws').replace(/\/api\/v1$/, '')
   const wsUrl = `${wsBase}/api/v1/ws/${conversationId}`
@@ -149,10 +154,13 @@ export function createStreamHandler(
     type: 'chat',
     session_id: conversationId,
     message: options.message,
+    agent_id: options.agentId,
     context: options.context,
-    workspace: options.workspace,
-    use_workflow: options.useWorkflow ?? true,
-    user_id: options.userId,
+    execution_strategy: 'auto',
+    access_token: auth.token,
+    api_key: auth.apiKey,
+    end_user_id: auth.endUserId,
+    approval_id: options.approvalId,
   }
 
   const handler = new StreamHandler(wsUrl, payload, {

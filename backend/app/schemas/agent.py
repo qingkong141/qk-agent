@@ -54,6 +54,7 @@ class MessageResponse(BaseModel):
     id: str
     role: str
     content: str
+    status: str = "completed"
     sources: list[dict] | None = None
     created_at: datetime
 

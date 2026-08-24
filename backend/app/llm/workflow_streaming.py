@@ -36,6 +36,7 @@ async def stream_workflow_to_websocket(
     websocket: WebSocket,
     workflow,
     initial_state: dict,
+    run_state: dict | None = None,
 ) -> dict:
     callback = StreamingCallbackHandler(websocket)
     streamed_text: list[str] = []
@@ -43,6 +44,8 @@ async def stream_workflow_to_websocket(
     intermediate_steps: list = []
     sources: list[dict] = []
     in_response_agent = False
+    final_kb_hit = False
+    response_status = "completed"
 
     async for event in workflow.astream_events(
         initial_state,
@@ -82,15 +85,19 @@ async def stream_workflow_to_websocket(
             output = event["data"].get("output", {})
             if isinstance(output, dict):
                 text = output.get("final_output", "")
+                final_kb_hit = output.get("kb_hit", False)
+                response_status = output.get("response_status", response_status)
                 if text:
                     final_output = text
                     if not streamed_text:
+                        if run_state is not None:
+                            run_state["partial_output"] = text
                         await _push_text(websocket, streamed_text, text)
                 steps = output.get("intermediate_steps", [])
                 kb_hit = output.get("kb_hit", False)
                 if steps:
                     intermediate_steps.extend(steps)
-                    if kb_hit:
+                    if final_kb_hit:
                         for step in steps:
                             tool = step[0].tool if hasattr(step[0], "tool") else ""
                             if tool == "search_knowledge_base":
@@ -110,23 +117,36 @@ async def stream_workflow_to_websocket(
             token = _extract_chunk_text(event["data"]["chunk"])
             if token:
                 streamed_text.append(token)
+                if run_state is not None:
+                    run_state["partial_output"] = "".join(streamed_text)
                 await websocket.send_json({"type": "token", "data": token})
         elif event_type == "on_chat_model_end" and in_response_agent:
             text = _extract_message_text(event["data"].get("output"))
             if text and not streamed_text:
                 final_output = text
+                if run_state is not None:
+                    run_state["partial_output"] = text
                 await _push_text(websocket, streamed_text, text)
         elif event_type == "on_chain_end" and name == "LangGraph":
             output = event["data"].get("output", {})
             if isinstance(output, dict):
                 final_output = output.get("final_output") or final_output
+                final_kb_hit = output.get("kb_hit", final_kb_hit)
+                response_status = output.get("response_status", response_status)
                 steps = output.get("intermediate_steps", [])
                 if steps:
                     intermediate_steps = steps
-                if output.get("sources"):
+                if final_kb_hit and output.get("sources"):
                     sources = output["sources"]
+                elif not final_kb_hit:
+                    sources = []
 
     if not final_output:
         final_output = "".join(streamed_text)
 
-    return {"output": final_output, "intermediate_steps": intermediate_steps, "sources": sources}
+    return {
+        "output": final_output,
+        "intermediate_steps": intermediate_steps,
+        "sources": sources if final_kb_hit else [],
+        "status": response_status,
+    }

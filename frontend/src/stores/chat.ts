@@ -16,6 +16,7 @@ export interface ChatMessage {
   toolName?: string
   agentName?: string
   streaming?: boolean
+  status?: 'completed' | 'needs_user_input' | 'interrupted' | 'cancelled'
   sources?: SourceCitation[]
 }
 
@@ -23,7 +24,7 @@ export const useChatStore = defineStore('chat', () => {
   const messages = ref<ChatMessage[]>([])
   const conversationId = ref('')
   const isStreaming = ref(false)
-  const useWorkflow = ref(true)
+  const agentId = ref<string | null>(null)
   const pendingSources = ref<SourceCitation[]>([])
 
   function addMessage(msg: Omit<ChatMessage, 'id'>) {
@@ -48,18 +49,53 @@ export const useChatStore = defineStore('chat', () => {
     }
   }
 
-  function finishLastAssistant(output: string) {
+  function finishLastAssistant(
+    output: string,
+    status: ChatMessage['status'] = 'completed',
+    sources?: SourceCitation[],
+  ) {
     const last = [...messages.value].reverse().find((m) => m.role === 'assistant')
     if (last) {
       if (output?.trim()) {
         last.content = output
       }
-      if (pendingSources.value.length) {
+      last.status = status
+      if (sources !== undefined) {
+        last.sources = sources.length ? sources : undefined
+      } else if (pendingSources.value.length) {
         last.sources = pendingSources.value
-        pendingSources.value = []
       }
+      pendingSources.value = []
       last.streaming = false
     }
+    isStreaming.value = false
+  }
+
+  function interruptLastAssistant(partialOutput?: string) {
+    const last = [...messages.value].reverse().find((m) => m.role === 'assistant')
+    if (last) {
+      if (partialOutput?.trim()) {
+        last.content = partialOutput
+      } else if (!last.content.trim()) {
+        last.content = '已停止'
+      }
+      last.status = 'interrupted'
+      last.streaming = false
+    }
+    pendingSources.value = []
+    isStreaming.value = false
+  }
+
+  function cancelLastAssistant() {
+    const last = [...messages.value].reverse().find((m) => m.role === 'assistant')
+    if (last) {
+      if (!last.content.trim()) {
+        last.content = '已取消'
+      }
+      last.status = 'cancelled'
+      last.streaming = false
+    }
+    pendingSources.value = []
     isStreaming.value = false
   }
 
@@ -70,7 +106,7 @@ export const useChatStore = defineStore('chat', () => {
   }
 
   function loadMessages(
-    items: Array<{ id: string; role: string; content: string; sources?: unknown }>,
+    items: Array<{ id: string; role: string; content: string; status?: ChatMessage['status']; sources?: unknown }>,
   ) {
     messages.value = items
       .filter((m) => m.role === 'user' || m.role === 'assistant')
@@ -81,6 +117,7 @@ export const useChatStore = defineStore('chat', () => {
           role: m.role as 'user' | 'assistant',
           content: m.content,
           streaming: false,
+          status: m.status ?? 'completed',
           sources: sources.length ? sources : undefined,
         }
       })
@@ -92,12 +129,14 @@ export const useChatStore = defineStore('chat', () => {
     messages,
     conversationId,
     isStreaming,
-    useWorkflow,
+    agentId,
     addMessage,
     appendToLast,
     stageSources,
     attachSourcesToLastAssistant,
     finishLastAssistant,
+    interruptLastAssistant,
+    cancelLastAssistant,
     clear,
     loadMessages,
   }

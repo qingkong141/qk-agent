@@ -31,6 +31,7 @@ async def stream_agent_to_websocket(
     websocket: WebSocket,
     agent: AgentExecutor,
     agent_input: dict,
+    run_state: dict | None = None,
 ) -> dict:
     """通过 astream_events 将 Agent 响应流式推送到 WebSocket"""
     callback = StreamingCallbackHandler(websocket)
@@ -49,11 +50,15 @@ async def stream_agent_to_websocket(
             token = _extract_chunk_text(chunk)
             if token:
                 streamed_text.append(token)
+                if run_state is not None:
+                    run_state["partial_output"] = "".join(streamed_text)
                 await websocket.send_json({"type": "token", "data": token})
         elif event_type == "on_chat_model_end":
             text = _extract_message_text(event["data"].get("output"))
             if text and not streamed_text:
                 streamed_text.append(text)
+                if run_state is not None:
+                    run_state["partial_output"] = "".join(streamed_text)
                 await websocket.send_json({"type": "token", "data": text})
         elif event_type == "on_chain_end" and event.get("name") == "AgentExecutor":
             output = event["data"].get("output")
