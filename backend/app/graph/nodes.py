@@ -35,7 +35,7 @@ async def kb_agent_node(state: WorkflowState) -> dict:
     if not state.get("turn_plan", {}).get("allow_rag", False):
         return {"agent_result": "", "kb_hit": False, "sources": []}
     query = extract_user_input(state["user_input"])
-    kb_text, kb_hit, _ = rag_pipeline.resolve_search(query)
+    kb_text, kb_hit, _ = rag_pipeline.resolve_search(query, user_id=state["user_id"])
     sources = parse_knowledge_sources(kb_text) if kb_hit else []
     await log_usage(
         state["user_id"],

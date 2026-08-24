@@ -91,5 +91,5 @@ async def list_documents(db: DbSession, user: CurrentUser):
 
 @router.post("/search", response_model=list[DocumentSearchResult])
 async def search_documents(data: DocumentSearchRequest, user: CurrentUser):
-    results = rag_pipeline.search(data.query, top_k=data.top_k)
+    results = rag_pipeline.search(data.query, user_id=user["id"], top_k=data.top_k)
     return results

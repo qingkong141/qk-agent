@@ -1,0 +1,4 @@
+# Optional local PP-OCR runtime. Install after the core requirements.
+paddleocr==3.7.0
+paddlepaddle==3.3.1
+PyYAML==6.0.2

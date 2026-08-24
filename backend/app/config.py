@@ -42,6 +42,13 @@ class Settings(BaseSettings):
     RAG_SIMILARITY_THRESHOLD: float = 0.55
     RAG_HIGH_CONFIDENCE_SCORE: float = 0.72
 
+    OCR_ENABLED: bool = True
+    OCR_LANGUAGE: str = "ch"
+    OCR_MIN_TEXT_LENGTH: int = 30
+    OCR_MIN_READABLE_RATIO: float = 0.7
+    OCR_RENDER_DPI: int = 250
+    OCR_ENABLE_MKLDNN: bool = False
+
     RATE_LIMIT_PER_MINUTE: int = 30
 
     LANGCHAIN_TRACING_V2: bool = False

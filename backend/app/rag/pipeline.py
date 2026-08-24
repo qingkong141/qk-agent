@@ -1,4 +1,7 @@
+import hashlib
 import re
+import threading
+import uuid
 from pathlib import Path
 
 from langchain_core.documents import Document
@@ -145,11 +148,91 @@ def _table_to_markdown(table: list[list[object | None]]) -> str:
     return "\n".join([render_row(header), render_row(separator), *(render_row(row) for row in body)])
 
 
-class PdfPlumberLoader:
-    """Extract PDF text plus tables, preserving tables as Markdown for RAG chunks."""
+def _native_text_quality(text: str) -> tuple[int, float]:
+    compact = "".join(text.split())
+    if not compact:
+        return 0, 0.0
+    readable = sum(
+        char.isalnum() or "\u4e00" <= char <= "\u9fff" or char in "，。！？；：,.!?;:（）()《》、-_/"
+        for char in compact
+    )
+    return len(compact), readable / len(compact)
 
-    def __init__(self, file_path: str):
+
+def _needs_ocr(text: str, has_images: bool = False) -> bool:
+    length, readable_ratio = _native_text_quality(text)
+    return (
+        length == 0
+        or readable_ratio < settings.OCR_MIN_READABLE_RATIO
+        or (has_images and length < settings.OCR_MIN_TEXT_LENGTH)
+    )
+
+
+def _ocr_result_data(result) -> dict:
+    if isinstance(result, dict):
+        return result
+    data = getattr(result, "json", None)
+    if callable(data):
+        data = data()
+    if isinstance(data, str):
+        import json
+        data = json.loads(data)
+    if isinstance(data, dict):
+        return data.get("res", data)
+    data = getattr(result, "res", None)
+    return data if isinstance(data, dict) else {}
+
+
+class PpOcrEngine:
+    """Lazy local PP-OCR adapter used only for low-quality PDF pages."""
+
+    def __init__(self):
+        self._pipeline = None
+        self._lock = threading.Lock()
+
+    def _get_pipeline(self):
+        with self._lock:
+            if self._pipeline is None:
+                try:
+                    from paddleocr import PaddleOCR
+                except ImportError as exc:
+                    raise RuntimeError(
+                        "OCR is required for this PDF page, but PaddleOCR is not installed. "
+                        "Install requirements-ocr.txt or set OCR_ENABLED=false."
+                    ) from exc
+                self._pipeline = PaddleOCR(
+                    lang=settings.OCR_LANGUAGE,
+                    use_doc_orientation_classify=False,
+                    use_doc_unwarping=False,
+                    use_textline_orientation=False,
+                    enable_mkldnn=settings.OCR_ENABLE_MKLDNN,
+                )
+        return self._pipeline
+
+    def recognize(self, image) -> tuple[str, float | None]:
+        import numpy as np
+
+        texts: list[str] = []
+        scores: list[float] = []
+        pipeline = self._get_pipeline()
+        with self._lock:
+            for result in pipeline.predict(np.asarray(image)):
+                data = _ocr_result_data(result)
+                texts.extend(str(text).strip() for text in data.get("rec_texts", []) if str(text).strip())
+                scores.extend(float(score) for score in data.get("rec_scores", []))
+        confidence = sum(scores) / len(scores) if scores else None
+        return "\n".join(texts), confidence
+
+
+_default_ocr_engine = PpOcrEngine()
+
+
+class PdfPlumberLoader:
+    """Extract PDF body text and tables as separate documents."""
+
+    def __init__(self, file_path: str, ocr_engine: PpOcrEngine | None = None):
         self.file_path = file_path
+        self.ocr_engine = ocr_engine or _default_ocr_engine
 
     def load(self) -> list[Document]:
         import pdfplumber
@@ -157,22 +240,46 @@ class PdfPlumberLoader:
         docs: list[Document] = []
         with pdfplumber.open(self.file_path) as pdf:
             for index, page in enumerate(pdf.pages):
-                parts: list[str] = []
-                text = page.extract_text() or ""
+                tables = page.find_tables()
+                table_boxes = [table.bbox for table in tables]
+
+                def outside_tables(obj: dict) -> bool:
+                    x = (obj.get("x0", 0) + obj.get("x1", 0)) / 2
+                    y = (obj.get("top", 0) + obj.get("bottom", 0)) / 2
+                    return not any(x0 <= x <= x1 and top <= y <= bottom for x0, top, x1, bottom in table_boxes)
+
+                body_page = page.filter(outside_tables) if table_boxes else page
+                text = body_page.extract_text() or ""
+                extraction_method = "native"
+                ocr_confidence = None
+                if settings.OCR_ENABLED and _needs_ocr(text, has_images=bool(page.images)):
+                    rendered = page.to_image(resolution=settings.OCR_RENDER_DPI).original
+                    ocr_text, ocr_confidence = self.ocr_engine.recognize(rendered)
+                    if ocr_text.strip():
+                        text = ocr_text
+                        extraction_method = "ocr"
                 if text.strip():
-                    parts.append(text.strip())
-
-                tables = page.extract_tables() or []
-                for table_index, table in enumerate(tables, start=1):
-                    markdown = _table_to_markdown(table)
-                    if markdown:
-                        parts.append(f"[Table {table_index}]\n{markdown}")
-
-                if parts:
                     docs.append(Document(
-                        page_content="\n\n".join(parts),
-                        metadata={"page": index},
+                        page_content=text.strip(),
+                        metadata={
+                            "page": index + 1,
+                            "content_type": "text",
+                            "extraction_method": extraction_method,
+                            **({"ocr_confidence": round(ocr_confidence, 4)} if ocr_confidence is not None else {}),
+                        },
                     ))
+
+                for table_index, table in enumerate(tables, start=1):
+                    markdown = _table_to_markdown(table.extract())
+                    if markdown:
+                        docs.append(Document(
+                            page_content=f"[Table {table_index}]\n{markdown}",
+                            metadata={
+                                "page": index + 1,
+                                "content_type": "table",
+                                "table_index": table_index,
+                            },
+                        ))
 
         return docs
 
@@ -185,7 +292,7 @@ class RAGPipeline:
         self.text_splitter = RecursiveCharacterTextSplitter(
             chunk_size=settings.CHUNK_SIZE,
             chunk_overlap=settings.CHUNK_OVERLAP,
-            separators=["\n\n", "\n", "。", ".", " ", ""],
+            separators=["\n\n", "\n", "。", "！", "？", "；", ".", " ", ""],
         )
         self._vector_store = None
 
@@ -218,33 +325,111 @@ class RAGPipeline:
         return self._vector_store
 
     def ingest_document(self, file_path: str, metadata: dict) -> int:
+        file_hash = hashlib.sha256(Path(file_path).read_bytes()).hexdigest()
+        metadata = {**metadata, "file_hash": file_hash}
         loader = self._get_loader(file_path)
         raw_docs = loader.load()
         for doc in raw_docs:
             doc.metadata.update(metadata)
-        chunks = self.text_splitter.split_documents(raw_docs)
-        ids = self._vector_store_add(chunks)
+        chunks = self._split_documents(raw_docs)
+        for index, chunk in enumerate(chunks):
+            chunk.metadata.update({"chunk_index": index, "chunk_count": len(chunks)})
+        owner = str(metadata.get("user_id", ""))
+        ids = [str(uuid.uuid5(uuid.NAMESPACE_URL, f"{owner}:{file_hash}:{index}")) for index in range(len(chunks))]
+        self._vector_store_add(chunks, ids=ids)
         return len(ids)
 
-    def _vector_store_add(self, chunks):
+    def _split_documents(self, documents: list[Document]) -> list[Document]:
+        """Split body text across page boundaries while keeping tables independent."""
+        text_docs = [doc for doc in documents if doc.metadata.get("content_type", "text") == "text"]
+        other_docs = [doc for doc in documents if doc.metadata.get("content_type", "text") != "text"]
+        chunks: list[Document] = []
+
+        if text_docs:
+            combined = "\n\n".join(doc.page_content for doc in text_docs)
+            page_spans: list[tuple[int, int, int]] = []
+            cursor = 0
+            for doc in text_docs:
+                end = cursor + len(doc.page_content)
+                page_spans.append((cursor, end, int(doc.metadata.get("page", 1))))
+                cursor = end + 2
+
+            search_from = 0
+            base_metadata = {
+                key: value
+                for key, value in text_docs[0].metadata.items()
+                if key not in {"page", "page_start", "page_end"}
+            }
+            for content in self.text_splitter.split_text(combined):
+                start = combined.find(content, max(0, search_from - settings.CHUNK_OVERLAP))
+                if start < 0:
+                    start = search_from
+                end = start + len(content)
+                covered_pages = [page for span_start, span_end, page in page_spans if span_start < end and span_end > start]
+                covered_docs = [doc for doc in text_docs if int(doc.metadata.get("page", 1)) in covered_pages]
+                methods = sorted({str(doc.metadata.get("extraction_method", "native")) for doc in covered_docs})
+                confidences = [float(doc.metadata["ocr_confidence"]) for doc in covered_docs if "ocr_confidence" in doc.metadata]
+                chunks.append(Document(
+                    page_content=content,
+                    metadata={
+                        **base_metadata,
+                        "content_type": "text",
+                        "page_start": min(covered_pages),
+                        "page_end": max(covered_pages),
+                        "extraction_methods": ",".join(methods),
+                        **({"ocr_confidence_min": min(confidences)} if confidences else {}),
+                    },
+                ))
+                search_from = end
+
+        for index in range(1, len(chunks)):
+            previous = chunks[index - 1]
+            current = chunks[index]
+            if current.metadata["page_start"] > previous.metadata["page_end"]:
+                overlap = previous.page_content[-settings.CHUNK_OVERLAP :].lstrip()
+                if overlap:
+                    current.page_content = f"{overlap}\n\n{current.page_content}"
+                    current.metadata["page_start"] = previous.metadata["page_end"]
+
+        if len(chunks) > 1 and len(chunks[-1].page_content) < 100:
+            tail = chunks.pop()
+            previous = chunks[-1]
+            previous.page_content = f"{previous.page_content}\n\n{tail.page_content}"
+            previous.metadata["page_end"] = tail.metadata.get("page_end", previous.metadata.get("page_end"))
+
+        for doc in other_docs:
+            for chunk in self.text_splitter.split_documents([doc]):
+                page = int(chunk.metadata.get("page", 1))
+                chunk.metadata.update({"page_start": page, "page_end": page})
+                chunks.append(chunk)
+        return chunks
+
+    def _vector_store_add(self, chunks, ids: list[str] | None = None):
         store = self._get_vector_store()
-        ids = store.add_documents(chunks)
+        stored_ids = store.add_documents(chunks, ids=ids)
         if hasattr(store, "persist"):
             store.persist()
-        return ids
+        return stored_ids
 
     @staticmethod
     def _distance_to_relevance(distance: float) -> float:
         """Chroma 返回的是距离（越小越相似），转换为 0~1 相关度"""
         return round(max(0.0, 1.0 - distance / 2.0), 3)
 
-    def search(self, query: str, top_k: int | None = None, threshold: float | None = None) -> list[dict]:
+    def search(
+        self,
+        query: str,
+        user_id: str,
+        top_k: int | None = None,
+        threshold: float | None = None,
+    ) -> list[dict]:
         top_k = top_k or settings.RAG_TOP_K
         threshold = threshold if threshold is not None else settings.RAG_SIMILARITY_THRESHOLD
         store = self._get_vector_store()
+        metadata_filter = {"user_id": user_id}
 
         if _is_postgres():
-            docs_with_scores = store.similarity_search_with_relevance_scores(query, k=top_k)
+            docs_with_scores = store.similarity_search_with_relevance_scores(query, k=top_k, filter=metadata_filter)
             return [
                 {"content": doc.page_content, "source": doc.metadata.get("source", ""), "score": round(score, 3)}
                 for doc, score in docs_with_scores
@@ -252,7 +437,7 @@ class RAGPipeline:
             ]
 
         # Chroma 的 relevance 分数偏低，用距离换算
-        docs_with_scores = store.similarity_search_with_score(query, k=top_k)
+        docs_with_scores = store.similarity_search_with_score(query, k=top_k, filter=metadata_filter)
         results = []
         for doc, distance in docs_with_scores:
             score = self._distance_to_relevance(distance)
@@ -264,8 +449,8 @@ class RAGPipeline:
                 })
         return results
 
-    def resolve_search(self, query: str) -> tuple[str, bool, list[dict]]:
-        results = self.search(query)
+    def resolve_search(self, query: str, user_id: str) -> tuple[str, bool, list[dict]]:
+        results = self.search(query, user_id=user_id)
         if not has_relevant_hit(query, results):
             return KB_MISS_TEXT, False, []
         filtered = filter_results_by_terms(query, results)
@@ -287,9 +472,9 @@ class RAGPipeline:
         pipeline = self
 
         @tool
-        def search_knowledge_base(query: str) -> str:
+        def search_knowledge_base(query: str, user_id: str) -> str:
             """搜索知识库中的文档内容"""
-            text, _, _ = pipeline.resolve_search(query)
+            text, _, _ = pipeline.resolve_search(query, user_id=user_id)
             return text
 
         return search_knowledge_base
