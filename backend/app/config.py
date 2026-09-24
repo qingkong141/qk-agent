@@ -14,6 +14,8 @@ class Settings(BaseSettings):
     SECRET_KEY: str = "change-me-in-production"
     API_V1_PREFIX: str = "/api/v1"
     CORS_ORIGINS: str = "*"
+    PLATFORM_SSO_BASE_URL: str = ""
+    PLATFORM_SYSTEM_CODE: str = "AIOT"
 
     DATABASE_URL: str = "sqlite+aiosqlite:///./data/agent.db"
 

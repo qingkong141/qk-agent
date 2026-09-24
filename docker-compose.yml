@@ -14,6 +14,8 @@ services:
       - LLM_PROVIDER=anthropic
       - LLM_MODEL=claude-sonnet-4-20250514
       - SECRET_KEY=${SECRET_KEY}
+      - PLATFORM_SSO_BASE_URL=${PLATFORM_SSO_BASE_URL:-}
+      - PLATFORM_SYSTEM_CODE=${PLATFORM_SYSTEM_CODE:-AIOT}
     volumes:
       - ./data/documents:/app/data/documents
       - ./data/logs:/app/data/logs

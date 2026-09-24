@@ -1,3 +1,4 @@
+from app.models.studio import StudioArtifact
 from app.models.agent_config import AgentConfig
 from app.models.clinical_decision import ClinicalDecision
 from app.models.conversation import AgentRun, Conversation, Message
@@ -8,6 +9,7 @@ from app.models.user import User
 from app.models.runtime import RunCheckpoint, ToolApproval, UserContext
 
 __all__ = [
+    "StudioArtifact",
     "User",
     "Conversation",
     "Message",

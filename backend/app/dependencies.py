@@ -63,10 +63,14 @@ async def authenticate_principal(
 async def get_current_user(
     credentials: Annotated[Optional[HTTPAuthorizationCredentials], Depends(security)],
     db: Annotated[AsyncSession, Depends(get_db)],
+    x_platform_token: Annotated[Optional[str], Header(alias="X-Platform-Token")] = None,
     x_api_key: Annotated[Optional[str], Header(alias="X-API-Key")] = None,
     x_end_user_id: Annotated[Optional[str], Header(alias="X-End-User-ID")] = None,
 ) -> dict:
-    """JWT 或 API Key 双模式认证"""
+    """Validate platform SSO, JWT, or API key credentials."""
+    if x_platform_token:
+        from app.platform_auth import authenticate_platform
+        return await authenticate_platform(db, x_platform_token)
     return await authenticate_principal(
         db,
         bearer_token=credentials.credentials if credentials else None,

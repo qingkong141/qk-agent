@@ -10,8 +10,9 @@ from slowapi.middleware import SlowAPIMiddleware
 
 from app.api import (
     agents, auth, chat, clinical_decisions, clinical_events,
-    context, conversations, documents, monitor, runtime, tools, workflows,
+    context, conversations, documents, monitor, runtime, studio, tools, workflows,
 )
+from app.api import semantic, syntax, protocol_debug
 from app.config import settings
 from app.core.exceptions import (
     global_exception_handler,
@@ -87,6 +88,10 @@ app.include_router(workflows.router, prefix=prefix)
 app.include_router(clinical_decisions.router, prefix=prefix)
 app.include_router(clinical_events.router, prefix=prefix)
 app.include_router(runtime.router, prefix=prefix)
+app.include_router(studio.router, prefix=prefix)
+app.include_router(semantic.router, prefix=prefix)
+app.include_router(syntax.router, prefix=prefix)
+app.include_router(protocol_debug.router, prefix=prefix)
 
 
 @app.get("/health")

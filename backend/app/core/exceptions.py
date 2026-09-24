@@ -1,6 +1,7 @@
 from fastapi import Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
+from fastapi.encoders import jsonable_encoder
 from loguru import logger
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
@@ -15,7 +16,7 @@ async def http_exception_handler(request: Request, exc: StarletteHTTPException):
 async def validation_exception_handler(request: Request, exc: RequestValidationError):
     return JSONResponse(
         status_code=422,
-        content={"detail": "请求参数无效", "errors": exc.errors(), "code": "VALIDATION_ERROR"},
+        content={"detail": "请求参数无效", "errors": jsonable_encoder(exc.errors()), "code": "VALIDATION_ERROR"},
     )
 
 
