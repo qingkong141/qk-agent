@@ -53,7 +53,7 @@ async def platform_devices(request: Request, user: CurrentUser, name: str = ''):
             response.raise_for_status(); body = response.json()
         if body.get('Status') != 1: raise ValueError('query failed')
         content = body['Content']
-        return {'total': content['TotalCount'], 'devices': [{'id': str(v['DeviceID']), 'code': str(v.get('SourceID') or v.get('DeviceCode') or ''),
+        return {'total': content['TotalCount'], 'devices': [{'id': str(v['DeviceID']), 'code': str(v.get('SourceID') or v['DeviceID']),
                  'name': v.get('DeviceName') or str(v['DeviceID']), 'location': v.get('Location') or '', 'type': v.get('DeviceTypeName') or ''} for v in content['List']]}
     except Exception as exc: raise HTTPException(502, '平台设备目录读取失败，请检查登录权限和设备服务') from exc
 
