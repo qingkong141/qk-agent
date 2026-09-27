@@ -39,7 +39,7 @@ async def main():
     import pymysql,psycopg,kafka,clickhouse_connect
     from pyhive import hive
     from iotdb.Session import Session
-    assert len(TYPES)==10
+    assert len(TYPES)==11 and {t[0] for t in TYPES}>={'mysql','postgres','polardb-mysql','polardb-postgres','kafka','roma-mqs','clickhouse','iotdb','hbase','hive','influxdb'}
     query,params=sql_for(ReadInput(resource='public.metrics',products=["a' OR 1=1 --"],limit=10))
     assert "a'" not in query and params==["a' OR 1=1 --"] and 'LIMIT 11' in query
     try:sql_for(ReadInput(resource='a:b'))

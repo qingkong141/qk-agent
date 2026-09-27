@@ -49,6 +49,37 @@ def dbapi(conn,kind,operation,read):
 
 def execute(c,password,operation,read=None):
     kind=c.type
+    if kind=='influxdb':
+        import httpx
+        query='SHOW MEASUREMENTS LIMIT '+('1' if operation=='test' else '501')
+        params={}
+        if read:
+            # One measurement, optionally qualified by retention policy; no arbitrary InfluxQL.
+            if len(read.resource.split('.'))>2:raise ValueError('InfluxDB请输入表名或保留策略.表名')
+            query='SELECT * FROM '+identifier(read.resource)
+            if read.products:
+                field=identifier(read.product_field)
+                params={f'product{i}':value for i,value in enumerate(read.products)}
+                query+=' WHERE ('+' OR '.join(f'{field} = ${key}' for key in params)+')'
+            query+=f' ORDER BY time DESC LIMIT {read.limit+1}'
+        with httpx.Client(timeout=15,trust_env=False,follow_redirects=False,auth=(c.username,password) if c.username else None) as client:
+            with client.stream('GET',f'{"https" if c.tls else "http"}://{c.host}:{c.port}/query',params={'db':c.database,'q':query,'params':json.dumps(params)}) as response:
+                response.raise_for_status();raw=bytearray()
+                for chunk in response.iter_bytes():
+                    raw.extend(chunk)
+                    if len(raw)>1000000:raise ValueError('本次响应超过1MB，请缩小读取范围')
+                body=json.loads(raw)
+        if body.get('error') or any(r.get('error') for r in body.get('results',[])):
+            raise ValueError('InfluxDB查询失败，请检查数据库、保留策略、字段和读取权限')
+        if not isinstance(body.get('results'),list) or not body['results']:
+            raise ValueError('InfluxDB未返回有效查询结果')
+        series=[s for result in body['results'] for s in result.get('series',[])]
+        if operation=='test':return {'connected':True}
+        if operation=='catalog':
+            names=[str(row[0]) for s in series for row in s.get('values',[])]
+            return {'resources':names[:500],'truncated':len(names)>500}
+        rows=[{**s.get('tags',{}),**dict(zip(s['columns'],row))} for s in series for row in s.get('values',[])]
+        return {'rows':rows,'selection':'InfluxDB服务端产品条件过滤，按时间倒序；未指定保留策略时读取数据库默认策略'}
     if kind in ('mysql','polardb-mysql'):
         import pymysql
         return dbapi(pymysql.connect(host=c.host,port=c.port,user=c.username,password=password,database=c.database or None,
