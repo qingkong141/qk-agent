@@ -152,7 +152,7 @@ async def bind_syntax(data: ArtifactInput, db, user, previous=None):
 
 @router.get("/artifacts")
 async def list_artifacts(db: DbSession, user: CurrentUser):
-    items = await db.scalars(select(StudioArtifact).where(*scope(user), StudioArtifact.kind.notin_(['protocol_run', 'data_chat', 'data_service', 'device_product', 'device_instance', 'device_report', 'device_chat'])).order_by(StudioArtifact.updated_at.desc()))
+    items = await db.scalars(select(StudioArtifact).where(*scope(user), StudioArtifact.kind.notin_(['protocol_run', 'data_chat', 'data_service', 'device_product', 'device_instance', 'device_report', 'device_chat', 'studio_agent'])).order_by(StudioArtifact.updated_at.desc()))
     return [serialize(item) for item in items]
 
 

@@ -34,6 +34,7 @@ email-validator>=2.0.0
 loguru>=0.7.2
 slowapi>=0.1.9
 httpx>=0.27.0
+mcp==1.30.0
 
 # 文档处理
 pypdf>=4.2.0

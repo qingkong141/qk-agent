@@ -26,6 +26,8 @@ from app.middleware.rate_limit import limiter
 from app.llm.ollama_health import check_ollama_health
 from app.tools import register_default_tools
 from fastapi.exceptions import RequestValidationError
+from app.services import studio_mcp
+from app.api import agent_studio
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 
@@ -50,7 +52,8 @@ async def lifespan(app: FastAPI):
             logger.warning(f"Ollama 缺少对话模型，请执行: ollama pull {settings.LLM_MODEL}")
         elif not ollama_status.get("embedding_model_ok"):
             logger.warning(f"Ollama 缺少 Embedding 模型，请执行: ollama pull {settings.EMBEDDING_MODEL}")
-    yield
+    async with studio_mcp.lifespan():
+        yield
     await realtime_poll.shutdown()
     logger.info("Shutting down")
 
@@ -104,6 +107,8 @@ app.include_router(data_services.router, prefix=prefix)
 app.include_router(realtime.router, prefix=prefix)
 app.include_router(applications.router, prefix=prefix)
 app.include_router(device_assistant.router, prefix=prefix)
+app.include_router(agent_studio.router, prefix=prefix)
+studio_mcp.mount(app)
 
 
 @app.get("/health")
