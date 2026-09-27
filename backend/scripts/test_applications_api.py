@@ -48,6 +48,19 @@ async def main():
             assert (await client.post(base+'/debug',json=filtered)).status_code==422
         assert (await client.post(base+'/data',json={'kind':'snapshot','rows':[{'value':False},{'value':None}]})).status_code==200
         assert (await client.post(base+'/debug',json={**cfg,'refreshSeconds':2})).status_code==422
+        logic={**cfg,'mode':'logic','logic':[{'id':'rule','field':'value','compare':'lt','value':40,'output':'condition','whenTrue':'需关注','whenFalse':'阈值内'}],
+               'source':{'kind':'snapshot','rows':[{'deviceId':'A','value':None},{'deviceId':'B','value':0},{'deviceId':'C','value':61}]}}
+        evaluated=await client.post(base+'/debug',json=logic);assert evaluated.status_code==200,evaluated.text
+        assert [r['condition'] for r in evaluated.json()['rows']]==[None,'需关注','阈值内']
+        bad_logic={**logic,'logic':[{**logic['logic'][0],'output':'value'}]}
+        assert (await client.post(base+'/debug',json=bad_logic)).status_code==422
+        for mode in ['iot','screen','mobile','scada','logic','twin']:
+            assert (await client.post(base+'/debug',json={**cfg,'mode':mode})).status_code==200
+        scene={'nodes':[{'id':'a','name':'设备A','deviceId':'A','kind':'device','x':20,'y':20},{'id':'b','name':'设备B','deviceId':'B','kind':'tank','x':70,'y':60}], 'edges':[{'from':'a','to':'b'}],'alertBelow':40}
+        scene_widget={**cfg['widgets'][0],'kind':'twin','groupField':'deviceId','scene':scene}
+        assert (await client.post(base+'/debug',json={**cfg,'widgets':[scene_widget]})).status_code==200
+        scene_widget['scene']={**scene,'edges':[{'from':'a','to':'missing'}]}
+        assert (await client.post(base+'/debug',json={**cfg,'widgets':[scene_widget]})).status_code==422
         assert (await client.post(base+'/debug',json={**cfg,'widgets':[cfg['widgets'][0],cfg['widgets'][0]]})).status_code==422
         page_widget={**cfg['widgets'][0],'id':'details-metric','filterField':'deviceId','filterVariable':'device'}
         table={**cfg['widgets'][1],'action':{'kind':'navigate','page':'details','variable':'device','valueField':'deviceId'}}

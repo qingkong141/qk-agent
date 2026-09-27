@@ -211,9 +211,9 @@ async def publish_artifact(artifact_id: str, data: RevisionInput, db: DbSession,
     if item.kind != "application" or not (item.config.get("widgets") or any(page.get('widgets') for page in item.config.get('pages',[]))):
         raise HTTPException(400, "当前只支持发布含组件的应用快照")
     if item.config.get('schemaVersion') == 2:
-        from app.api.applications import read_source, check_widgets
+        from app.api.applications import read_source, check_widgets, apply_logic
         config = ApplicationV2Config.model_validate(item.config)
-        result = await read_source(config.source, db, user, request.headers.get('X-Platform-Token'))
+        result = apply_logic(config, await read_source(config.source, db, user, request.headers.get('X-Platform-Token')))
         check_widgets(config, result)
     result = await db.execute(update(StudioArtifact).where(StudioArtifact.id == artifact_id, *scope(user),
         StudioArtifact.revision == data.expected_revision).values(published_revision=data.expected_revision, published_config=item.config))

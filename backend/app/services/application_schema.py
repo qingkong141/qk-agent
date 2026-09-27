@@ -1,7 +1,7 @@
 """Configuration for applications with live, owned data bindings."""
 import json
 from typing import Literal
-from pydantic import BaseModel, Field, JsonValue, model_validator
+from pydantic import BaseModel, Field, FiniteFloat, JsonValue, model_validator
 
 
 class PlatformSource(BaseModel):
@@ -35,9 +35,48 @@ class Action(BaseModel):
     valueField: str = Field(default='', max_length=300)
 
 
+class SceneNode(BaseModel):
+    id: str = Field(min_length=1,max_length=100)
+    name: str = Field(min_length=1,max_length=80)
+    deviceId: str = Field(min_length=1,max_length=100)
+    kind: Literal['device','tank','gateway'] = 'device'
+    x: FiniteFloat = Field(ge=8,le=92)
+    y: FiniteFloat = Field(ge=12,le=88)
+
+
+class SceneEdge(BaseModel):
+    from_id: str = Field(alias='from')
+    to: str
+
+
+class Scene(BaseModel):
+    nodes: list[SceneNode] = Field(default_factory=list,max_length=20)
+    edges: list[SceneEdge] = Field(default_factory=list,max_length=50)
+    alertBelow: FiniteFloat|None = None
+
+    @model_validator(mode='after')
+    def valid(self):
+        ids={n.id for n in self.nodes}
+        if len(ids)!=len(self.nodes): raise ValueError('场景设备编号重复')
+        if any(e.from_id not in ids or e.to not in ids or e.from_id==e.to for e in self.edges): raise ValueError('场景连线无效')
+        if len({(e.from_id,e.to) for e in self.edges})!=len(self.edges): raise ValueError('场景连线重复')
+        return self
+
+
+class LogicRule(BaseModel):
+    id: str = Field(min_length=1,max_length=100)
+    field: str = Field(min_length=1,max_length=300)
+    compare: Literal['gt','gte','lt','lte','eq','ne'] = 'lt'
+    value: FiniteFloat
+    output: str = Field(pattern=r'^[a-zA-Z][a-zA-Z0-9_]{0,63}$')
+    whenTrue: str = Field(min_length=1,max_length=100)
+    whenFalse: str = Field(min_length=1,max_length=100)
+
+
 class Widget(BaseModel):
     id: str = Field(min_length=1, max_length=100)
-    kind: Literal['metric', 'line', 'bar', 'table', 'text','button','select']
+    kind: Literal['metric', 'line', 'bar', 'table', 'text','button','select','equipment','twin']
+    scene: Scene = Field(default_factory=Scene)
     title: str = Field(min_length=1, max_length=80)
     field: str = Field(default='', max_length=300)
     xField: str = Field(default='', max_length=300)
@@ -59,11 +98,12 @@ class Widget(BaseModel):
     def fields(self):
         if not self.title.strip(): raise ValueError('请填写组件标题')
         if self.kind in ('line','bar') and not self.xField: raise ValueError('请选择横轴字段')
-        if self.kind in ('line','bar','metric') and not (self.kind=='metric' and self.aggregation=='count') and not self.field:
+        if self.kind in ('line','bar','metric','equipment','twin') and not (self.kind=='metric' and self.aggregation=='count') and not self.field:
             raise ValueError('请选择数值字段')
         if self.kind=='table' and not self.columns: raise ValueError('请选择表格列')
         if self.kind=='select' and (not self.field or not self.variable): raise ValueError('请选择下拉框的选项字段与页面变量')
         if self.action.valueField and self.kind!='table': raise ValueError('只有数据表格行点击可以传递行字段值')
+        if self.kind in ('equipment','twin') and (not self.groupField or not self.scene.nodes): raise ValueError('请设置场景设备及设备标识字段')
         return self
 
 
@@ -81,6 +121,8 @@ class Variable(BaseModel):
 
 class ApplicationConfig(BaseModel):
     schemaVersion: Literal[2]
+    mode: Literal['iot','screen','mobile','scada','logic','twin'] = 'iot'
+    logic: list[LogicRule] = Field(default_factory=list,max_length=20)
     title: str = Field(min_length=1, max_length=120)
     source: Binding
     refreshSeconds: int = Field(default=0, ge=0, le=300)
@@ -103,6 +145,8 @@ class ApplicationConfig(BaseModel):
         if len(pages)!=len(self.pages) or 'home' in pages: raise ValueError('页面编号重复')
         if any(not p.title.strip() for p in self.pages) or not self.homeTitle.strip(): raise ValueError('请填写页面名称')
         variables={v.name for v in self.variables}
+        if len({r.id for r in self.logic})!=len(self.logic) or len({r.output for r in self.logic})!=len(self.logic): raise ValueError('业务规则编号或输出字段重复')
+        if any(r.output in {'__proto__','constructor','prototype'} for r in self.logic): raise ValueError('业务规则输出字段无效')
         if len(variables)!=len(self.variables) or variables & {'__proto__','constructor','prototype'}: raise ValueError('变量名称重复或无效')
         for w in widgets:
             if w.filterVariable and (w.filterVariable not in variables or not w.filterField): raise ValueError('筛选变量不存在或未设置筛选字段')
