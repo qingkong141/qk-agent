@@ -80,8 +80,13 @@ async def entries(db, user):
 def chat_model(item):
     try: key = cipher().decrypt(item.credential.encode()).decode()
     except InvalidToken as exc: raise HTTPException(409, '模型密钥无法解密，请重新保存 API Key') from exc
+    options = {'max_tokens': settings.MAX_TOKENS, 'max_retries': 0}
+    if urlsplit(item.base_url).hostname == 'api.modelarts-maas.com' and item.model == 'kimi-k2.6':
+        # MaaS Kimi requires legacy token limits; non-thinking mode permits SDK tool-result turns.
+        options = {'max_tokens': None, 'max_retries': 2,
+                   'extra_body': {'max_tokens': settings.MAX_TOKENS, 'chat_template_kwargs': {'thinking': False}}}
     return ChatOpenAI(model=item.model, base_url=item.base_url, api_key=key, streaming=False,
-                      temperature=settings.TEMPERATURE, max_tokens=settings.MAX_TOKENS, timeout=45, max_retries=0)
+                      temperature=settings.TEMPERATURE, timeout=45, **options)
 
 
 @router.get('')

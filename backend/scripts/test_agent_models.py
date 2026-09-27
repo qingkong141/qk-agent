@@ -4,13 +4,14 @@ import json
 import os
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 os.environ['DATABASE_URL'] = 'sqlite+aiosqlite:///:memory:'
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import httpx
 from fastapi import FastAPI, HTTPException
-from langchain_core.messages import AIMessage
+from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker
 from app.api import agent_models as api, agent_studio as agents
 from app.db.session import get_db
@@ -55,12 +56,33 @@ async def main():
                     assert request.headers['authorization'] == 'Bearer '+data['api_key']
                     payload = json.loads(request.content)
                     assert payload['model'] == 'device-model' and payload['tools'][0]['function']['name'] == 'connection_check'
+                    assert 'extra_body' not in payload and 'chat_template_kwargs' not in payload
                     return httpx.Response(200, json={'id':'response', 'object':'chat.completion', 'created':1, 'model':'device-model', 'choices':[{'index':0,'finish_reason':'tool_calls','message':{'role':'assistant','content':None,'tool_calls':[{'id':'call','type':'function','function':{'name':'connection_check','arguments':'{}'}}]}}]})
                 async with httpx.AsyncClient(transport=httpx.MockTransport(wire)) as http:
                     factory = api.ChatOpenAI
                     with patch.object(api, 'ChatOpenAI', lambda **kw: factory(**kw, http_async_client=http)):
                         result = await client.post(path+'/test')
                         assert result.status_code == 200, result.text
+            calls = []
+            async def kimi_wire(request):
+                payload = json.loads(request.content); calls.append(payload)
+                assert payload['max_tokens'] == api.settings.MAX_TOKENS and 'max_completion_tokens' not in payload
+                assert payload['chat_template_kwargs'] == {'thinking': False}
+                if len(calls) == 1:
+                    return httpx.Response(429, headers={'retry-after':'1'}, json={'error':{'message':'rate limit'}})
+                message = {'role':'assistant','content':'Connection works'} if payload['messages'][-1]['role'] == 'tool' else {'role':'assistant','content':None,'tool_calls':[{'id':'kimi-call','type':'function','function':{'name':'connection_check','arguments':'{}'}}]}
+                return httpx.Response(200, json={'id':'response','object':'chat.completion','created':1,'model':'kimi-k2.6','choices':[{'index':0,'finish_reason':'stop' if message['content'] else 'tool_calls','message':message}]})
+            async with httpx.AsyncClient(transport=httpx.MockTransport(kimi_wire)) as http:
+                factory = api.ChatOpenAI
+                with patch.object(api, 'ChatOpenAI', lambda **kw: factory(**kw, http_async_client=http)):
+                    connection = SimpleNamespace(model='kimi-k2.6', base_url='https://api.modelarts-maas.com/openai/v1', credential=encrypted)
+                    model = api.chat_model(connection).bind_tools([{'type':'function','function':{'name':'connection_check','parameters':{'type':'object','properties':{}}}}])
+                    messages = [HumanMessage(content='Check connection')]
+                    first = await model.ainvoke(messages)
+                    final = await model.ainvoke(messages+[first, ToolMessage(content='{"ok":true}', tool_call_id=first.tool_calls[0]['id'])])
+                    assert final.content == 'Connection works' and len(calls) == 3
+            other_provider = api.chat_model(SimpleNamespace(model='kimi-k2.6', base_url='https://model.example/v1', credential=encrypted))
+            assert other_provider.max_retries == 0 and not other_provider.extra_body
             result = await client.put(path, json={**data, 'name':'已修改', 'api_key':'', 'expected_revision':1})
             assert result.status_code == 200 and result.json()['revision'] == 2
             async with sessions() as db:
