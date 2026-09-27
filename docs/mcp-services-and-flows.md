@@ -60,6 +60,7 @@ ALTER TABLE studio_mcp_services ADD COLUMN stdio_profile VARCHAR(100) DEFAULT ''
 | DELETE /studio/mcp-services/{id} | 删除未被引用的服务 |
 | POST /studio/mcp-services/{id}/test | 建立标准 MCP 会话并发现工具 |
 | POST /studio/mcp-services/{id}/call | 按 tool 和 arguments 执行工具 |
+| POST /studio/mcp-services/{id}/map-preview | 使用当前账号的高德服务凭据获取带标点的地图图片 |
 | GET/POST /studio/mcp-flows | 查询或创建流程 |
 | GET/PUT/DELETE /studio/mcp-flows/{id} | 读取、修改、删除流程 |
 | POST /studio/mcp-flows/debug | 执行提交的草稿 config 和 input |
@@ -92,3 +93,15 @@ ALTER TABLE studio_mcp_services ADD COLUMN stdio_profile VARCHAR(100) DEFAULT ''
 - 高德官方 MCP 已使用加密保存的 Key 接入，读取到 15 个真实工具。`maps_geo` 查询“重庆医科大学附属第一医院”（城市“重庆”）成功返回两个地点候选；实际页面调用亦通过。服务“高德地理位置”保留在管理员账号下。完整工具定义和结果见 `docs/evidence/mcp-231/amap-live-verification.json`，不含密钥。DeepL、PaddleOCR、fal 尚待账号或部署环境。
 
 条款231材料见 `docs/evidence/mcp-231/index.html`，包含真实页面截图、官方来源、测试记录和未接通外部服务的边界说明；可浏览或打印，不依赖现场演示。
+
+## 地点结果展示
+
+高德地理编码、POI 查询及逆地理编码结果中的有效坐标可在 MCP 调试页显示地图。多个候选地点分别列出，支持切换地点、调整缩放和在高德地图打开；原始数据可展开查看。结果使用本次执行的输入快照，继续编辑输入不会给旧结果错误标注名称。
+
+当前页使用高德静态地图 API 显示带标点的实际底图，缩放时重新请求图片；页面内不支持拖拽平移。完整交互可从“在高德地图打开”进入。集成高德 JS API 则需单独提供 Web（JS API）Key 与安全密钥。后台读取该账号加密保存的 Web 服务 Key，固定调用高德端点，不将密钥或平台凭据返回浏览器。
+
+验证：`backend/scripts/test_amap_preview.py` 覆盖坐标范围、服务归属、停用状态、服务类型、凭据隔离及厂商错误；前端 `geo-result.test.ts` 覆盖多院区候选、无效坐标及链接编码。`scripts/check-mcp-map.cjs` 通过真实医院查询验证地图图片、地点切换、缩放、输入快照、原始数据和失败重试。已有服务及测试数据保留。
+
+![高德地点结果地图](evidence/mcp-231/04-amap-map-preview.png)
+
+接口依据：[高德静态地图](https://lbs.amap.com/api/webservice/guide/api/staticmaps)、[地点标注链接](https://lbs.amap.com/api/uri-api/guide/mobile-web/point)、[JS API 密钥要求](https://lbs.amap.com/api/javascript-api-v2/guide/abc/jscode)。

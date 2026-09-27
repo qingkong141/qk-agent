@@ -16,6 +16,7 @@ from app.models.mcp_service import MCPService
 from app.models.studio import StudioArtifact
 from app.services import mcp_registry as registry, studio_mcp
 from app.services import mcp_stdio
+from app.services.amap_preview import MapInput, render as render_map
 from app.services.mcp_templates import TEMPLATES
 
 router = APIRouter(prefix='/studio/mcp-services', tags=['mcp-services'])
@@ -139,3 +140,8 @@ async def test(service_id:str,request:Request,db:DbSession,user:CurrentUser):
 @router.post('/{service_id}/call')
 async def call(service_id:str,data:Call,request:Request,db:DbSession,user:CurrentUser):
     return await registry.call(service_id,data.tool,data.arguments,request.headers,db,user)
+
+
+@router.post('/{service_id}/map-preview')
+async def map_preview(service_id:str,data:MapInput,db:DbSession,user:CurrentUser):
+    return await render_map(service_id,data,db,user)
