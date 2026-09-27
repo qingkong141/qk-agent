@@ -1,0 +1,7 @@
+Checking SSE transport...
+Checking workflow execution...
+PASS: stdio process discovery/call, encrypted environment key, process environment isolation and registered-program enforcement
+PASS: real Streamable HTTP and SSE discovery/calls, encrypted keys, credential isolation, schemas, typed references, DAG validation, failure stops, ownership, revisions, published snapshots, API invocation and multimodal content
+[09/27/26 17:13:09] INFO     HTTP Request: GET                  _client.py:1740
+                             https://mcp.example/mcp "HTTP/1.1
+                             200 OK"

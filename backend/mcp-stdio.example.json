@@ -1,0 +1,9 @@
+{
+  "deepl": {
+    "name": "DeepL 文本处理",
+    "command": "C:/Program Files/nodejs/node.exe",
+    "args": ["D:/mcp/deepl-mcp-server/src/index.mjs"],
+    "cwd": "D:/mcp/deepl-mcp-server",
+    "secret_env": "DEEPL_API_KEY"
+  }
+}

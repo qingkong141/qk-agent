@@ -44,6 +44,11 @@ async def ensure_schema_patches() -> None:
     from sqlalchemy import text
 
     async with engine.begin() as conn:
+        mcp_columns = {row[1] for row in (await conn.execute(text("PRAGMA table_info(studio_mcp_services)"))).fetchall()}
+        if mcp_columns and 'query_name' not in mcp_columns:
+            await conn.execute(text("ALTER TABLE studio_mcp_services ADD COLUMN query_name VARCHAR(100) DEFAULT 'key' NOT NULL"))
+        if mcp_columns and 'stdio_profile' not in mcp_columns:
+            await conn.execute(text("ALTER TABLE studio_mcp_services ADD COLUMN stdio_profile VARCHAR(100) DEFAULT '' NOT NULL"))
         conversation_result = await conn.execute(text("PRAGMA table_info(conversations)"))
         conversation_columns = {row[1] for row in conversation_result.fetchall()}
         if "external_user_id" not in conversation_columns:

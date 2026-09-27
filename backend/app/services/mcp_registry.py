@@ -3,6 +3,7 @@ import asyncio
 import base64
 import hashlib
 import json
+import os
 from contextlib import asynccontextmanager
 from datetime import timedelta
 
@@ -14,12 +15,13 @@ from jsonschema.exceptions import SchemaError
 from mcp import ClientSession
 from mcp.client.sse import sse_client
 from mcp.client.streamable_http import streamable_http_client
+from mcp.client.stdio import stdio_client
 from sqlalchemy import select
 
 from app.api.datasets import scope
 from app.config import settings
 from app.models.mcp_service import MCPService
-from app.services import studio_mcp
+from app.services import studio_mcp, mcp_stdio
 
 PREFIX = 'mcp:'
 CATEGORIES = {'nlp':'自然语言处理', 'vision':'计算机视觉', 'multimodal':'多模态生成', 'geo':'地理位置', 'other':'其他服务'}
@@ -32,7 +34,8 @@ def cipher():
 
 def public(item):
     return {'id':PREFIX+item.id, 'name':item.name, 'description':item.description, 'category':item.category,
-            'url':item.url, 'path':item.url, 'transport':item.transport, 'auth_type':item.auth_type,
+            'url':item.url, 'path':item.stdio_profile if item.transport=='stdio' else item.url, 'transport':item.transport, 'auth_type':item.auth_type,
+            'query_name':item.query_name, 'stdio_profile':item.stdio_profile,
             'header_name':item.header_name, 'has_key':bool(item.credential), 'enabled':item.enabled,
             'timeout_seconds':item.timeout_seconds, 'tools':item.tools, 'checked_at':item.checked_at,
             'revision':item.revision, 'builtin':False}
@@ -57,6 +60,20 @@ async def validate_services(ids, db, user):
         if not item.enabled: raise HTTPException(409, f'MCP服务“{item.name}”已停用')
 
 
+class QueryCredentialTransport(httpx.AsyncBaseTransport):
+    """Insert the key only on the wire; HTTPX request logging keeps the clean URL."""
+    def __init__(self, name, key, transport=None):
+        self.name=name; self.key=key
+        self.transport=transport or httpx.AsyncHTTPTransport()
+
+    async def handle_async_request(self, request):
+        outgoing=httpx.Request(request.method, request.url.copy_set_param(self.name,self.key),
+                               headers=request.headers, stream=request.stream, extensions=request.extensions)
+        return await self.transport.handle_async_request(outgoing)
+
+    async def aclose(self): await self.transport.aclose()
+
+
 @asynccontextmanager
 async def connect(service_id, headers, db, user):
     if service_id in studio_mcp.SERVERS:
@@ -64,19 +81,29 @@ async def connect(service_id, headers, db, user):
         return
     item = await owned(service_id,db,user)
     if not item.enabled: raise HTTPException(409, 'MCP服务已停用')
-    outgoing = {}
+    outgoing = {}; key = ''
     if item.credential:
         try: key = cipher().decrypt(item.credential.encode()).decode()
         except InvalidToken as exc: raise HTTPException(409, 'MCP密钥无法解密，请重新配置') from exc
-        outgoing['Authorization' if item.auth_type=='bearer' else item.header_name] = 'Bearer '+key if item.auth_type=='bearer' else key
+        if item.auth_type in ('bearer','api_key'):
+            outgoing['Authorization' if item.auth_type=='bearer' else item.header_name] = 'Bearer '+key if item.auth_type=='bearer' else key
     timeout = item.timeout_seconds
+    if item.transport=='stdio':
+        params=mcp_stdio.parameters(item.stdio_profile,key)
+        # External programs can print secrets to stderr; never copy this into API logs.
+        with open(os.devnull,'w') as errlog:
+            async with stdio_client(params,errlog=errlog) as (reader,writer):
+                async with ClientSession(reader,writer,read_timeout_seconds=timedelta(seconds=timeout)) as session:
+                    await session.initialize(); yield session
+        return
+    def transport(): return QueryCredentialTransport(item.query_name,key) if item.auth_type=='query' else None
     if item.transport == 'sse':
-        def factory(**kwargs): return httpx.AsyncClient(**kwargs,trust_env=False,follow_redirects=False)
+        def factory(**kwargs): return httpx.AsyncClient(**kwargs,trust_env=False,follow_redirects=False,transport=transport())
         async with sse_client(item.url,headers=outgoing,timeout=timeout,sse_read_timeout=timeout,httpx_client_factory=factory) as (reader,writer):
             async with ClientSession(reader,writer,read_timeout_seconds=timedelta(seconds=timeout)) as session:
                 await session.initialize(); yield session
     else:
-        async with httpx.AsyncClient(headers=outgoing,timeout=timeout,trust_env=False,follow_redirects=False) as client:
+        async with httpx.AsyncClient(headers=outgoing,timeout=timeout,trust_env=False,follow_redirects=False,transport=transport()) as client:
             async with streamable_http_client(item.url,http_client=client) as (reader,writer,_):
                 async with ClientSession(reader,writer,read_timeout_seconds=timedelta(seconds=timeout)) as session:
                     await session.initialize(); yield session

@@ -21,6 +21,7 @@ class Settings(BaseSettings):
     PLATFORM_PM_BASE_URL: str = ""
     PLATFORM_PE_BASE_URL: str = ""
     PLATFORM_MAP_SYS_TYPE: str = ""
+    MCP_STDIO_CONFIG_FILE: str = ""
 
     DATABASE_URL: str = "sqlite+aiosqlite:///./data/agent.db"
 

@@ -3,11 +3,14 @@ import asyncio
 import copy
 import json
 import logging
+import io
 import os
 import socket
 import sys
 from contextlib import asynccontextmanager
 from pathlib import Path
+from tempfile import TemporaryDirectory
+from urllib.parse import parse_qs
 from unittest.mock import patch
 
 os.environ['DATABASE_URL']='sqlite+aiosqlite:///:memory:'
@@ -15,6 +18,7 @@ sys.path.insert(0,str(Path(__file__).resolve().parents[1]))
 import httpx
 import uvicorn
 from fastapi import FastAPI
+from fastapi.exceptions import RequestValidationError
 from mcp.server.fastmcp import FastMCP
 from mcp.types import CallToolResult, ImageContent
 from langchain_core.messages import AIMessage
@@ -24,11 +28,12 @@ from app.db.session import Base,get_db
 from app.dependencies import get_current_user
 from app.models.mcp_service import MCPService
 from app.services import mcp_registry as registry,mcp_flow as runtime
+from app.core.exceptions import validation_exception_handler
 
 
 async def main():
     logging.disable(logging.CRITICAL)
-    seen=[];invocations=[]
+    seen=[];queries=[];invocations=[]
     mcp=FastMCP('test-service',stateless_http=True,json_response=True,streamable_http_path='/')
     @mcp.tool()
     async def analyze(text:str)->dict:
@@ -44,7 +49,7 @@ async def main():
     external=FastAPI(lifespan=lifespan)
     @external.middleware('http')
     async def record(request,call_next):
-        seen.append(dict(request.headers));return await call_next(request)
+        seen.append(dict(request.headers));queries.append(parse_qs(request.url.query));return await call_next(request)
     external.mount('/mcp',mcp.streamable_http_app())
     external.mount('/legacy',mcp.sse_app())
     sock=socket.socket();sock.bind(('127.0.0.1',0));port=sock.getsockname()[1]
@@ -58,6 +63,7 @@ async def main():
     async def database():
         async with sessions() as db: yield db
     api=FastAPI();api.include_router(services.router);api.include_router(flows.router)
+    api.add_exception_handler(RequestValidationError,validation_exception_handler)
     api.dependency_overrides[get_current_user]=user;api.dependency_overrides[get_db]=database
     try:
         async with asyncio.timeout(10):
@@ -77,6 +83,18 @@ async def main():
                 assert {t['name'] for t in discovery.json()['tools']}=={'analyze','collect','fail'}
                 assert seen and all(h.get('authorization')=='Bearer isolated-test-key' for h in seen)
                 assert all('x-platform-token' not in h and 'x-platform-session-id' not in h for h in seen)
+                # Amap-style query keys stay out of stored URLs and API responses.
+                query_key='isolated+/ =&query-key'
+                for protocol,endpoint in [('streamable_http',f'http://127.0.0.1:{port}/mcp/'),('sse',f'http://127.0.0.1:{port}/legacy/sse')]:
+                    query_service=await client.post('/studio/mcp-services',json={**data,'url':endpoint,'transport':protocol,'auth_type':'query','query_name':'key','api_key':query_key})
+                    assert query_service.status_code==201,query_service.text
+                    assert query_key not in query_service.text and '?' not in query_service.json()['url']
+                    query_path='/studio/mcp-services/'+query_service.json()['id']
+                    query_result=await client.post(query_path+'/call',json={'tool':'collect','arguments':{'value':'query-auth'}})
+                    assert query_result.json()['data']['received']=='query-auth'
+                    assert any(q.get('key')==[query_key] for q in queries)
+                    assert (await client.put(query_path,json={**data,'url':endpoint,'transport':protocol,'auth_type':'query','query_name':'token','api_key':'','expected_revision':1})).status_code==400
+                invocations.clear()
                 invalid=await client.post(path+'/call',json={'tool':'analyze','arguments':{}});assert invalid.status_code==400 and not invocations
                 valid=await client.post(path+'/call',json={'tool':'analyze','arguments':{'text':'hello'}});assert valid.json()['data']['text']=='HELLO'
                 edited=await client.put(path,json={**data,'api_key':'','expected_revision':1});assert edited.status_code==200
@@ -141,6 +159,44 @@ async def main():
                 assert (await client.request('DELETE',flow_path,json={'expected_revision':2})).status_code==200
                 assert (await client.request('DELETE',path,json={'expected_revision':1})).status_code==409
                 assert (await client.request('DELETE',path,json={'expected_revision':2})).status_code==200
+                # Launch a real child process via MCP stdio, never a browser-provided command.
+                with TemporaryDirectory() as temp:
+                    profiles=Path(temp)/'profiles.json'
+                    profiles.write_text(json.dumps({'echo':{'name':'Protocol fixture','command':sys.executable,'args':[str(Path(__file__).parent/'fixtures/mcp_stdio_server.py')],'secret_env':'MCP_TEST_KEY'}}),encoding='utf-8')
+                    with patch.object(registry.settings,'MCP_STDIO_CONFIG_FILE',str(profiles)),patch.dict(os.environ,{'PLATFORM_TEST_PRIVATE':'must-not-leak'}):
+                        local={'name':'stdio协议测试','transport':'stdio','stdio_profile':'echo','auth_type':'env','api_key':'stdio-test-key'}
+                        registered=await client.get('/studio/mcp-services/stdio-profiles')
+                        assert registered.json()==[{'id':'echo','name':'Protocol fixture','secret_env':'MCP_TEST_KEY'}]
+                        assert (await client.post('/studio/mcp-services',json={**local,'command':'arbitrary.exe'})).status_code==422
+                        assert (await client.post('/studio/mcp-services',json={**local,'stdio_profile':'unknown'})).status_code==400
+                        rejected=await client.post('/studio/mcp-services',json={**local,'auth_type':'bearer'})
+                        assert rejected.status_code==422 and 'stdio-test-key' not in rejected.text
+                        local_response=await client.post('/studio/mcp-services',json=local);assert local_response.status_code==201,local_response.text
+                        local_path='/studio/mcp-services/'+local_response.json()['id']
+                        assert (await client.post(local_path+'/test')).json()['tools'][0]['name']=='echo'
+                        echoed=(await client.post(local_path+'/call',json={'tool':'echo','arguments':{'text':'真实标准输入输出'}})).json()
+                        assert not echoed['error'] and echoed['data']['credential_ok'] and not echoed['data']['platform_secret_leaked'],echoed
+                        assert echoed['data']['text']=='真实标准输入输出'
+                        changed=await client.put(local_path,json={**local,'api_key':'','expected_revision':1})
+                        assert changed.status_code==200 and changed.json()['has_key']
+                        await client.request('DELETE',local_path,json={'expected_revision':2})
+                        print('PASS: stdio process discovery/call, encrypted environment key, process environment isolation and registered-program enforcement',flush=True)
+                templates=(await client.get('/studio/mcp-services/templates')).json()
+                assert {t['category'] for t in templates}=={'nlp','vision','multimodal','geo'}
+        # HTTPX INFO request logging must use a credential-free URL.
+        logs=io.StringIO();handler=logging.StreamHandler(logs);http_logger=logging.getLogger('httpx');old_level=http_logger.level
+        http_logger.addHandler(handler);http_logger.setLevel(logging.INFO);logging.disable(logging.NOTSET)
+        try:
+            async def remote(request):
+                assert request.url.params['key']=='private-query-value'
+                return httpx.Response(200,json={'ok':True})
+            transport=registry.QueryCredentialTransport('key','private-query-value',httpx.MockTransport(remote))
+            async with httpx.AsyncClient(transport=transport) as client:
+                response=await client.get('https://mcp.example/mcp')
+                assert '?' not in str(response.request.url)
+            assert 'https://mcp.example/mcp' in logs.getvalue() and 'private-query-value' not in logs.getvalue()
+        finally:
+            http_logger.removeHandler(handler);http_logger.setLevel(old_level);logging.disable(logging.CRITICAL)
         media=CallToolResult(content=[ImageContent(type='image',data='test-base64',mimeType='image/png')])
         assert registry.unpack(media)['content'][0]['type']=='image'
         assert runtime.resolve({'$from':'input','path':'/a~1b/0'}, {'a/b':[None]}, {}) is None
