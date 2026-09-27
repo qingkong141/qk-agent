@@ -35,6 +35,12 @@ loguru>=0.7.2
 slowapi>=0.1.9
 httpx>=0.27.0
 mcp==1.30.0
+pymysql==1.2.3
+psycopg[binary]==3.3.6
+kafka-python==3.0.11
+clickhouse-connect==1.9.0
+apache-iotdb==2.0.11
+PyHive[hive_pure_sasl]==0.7.0
 
 # 文档处理
 pypdf>=4.2.0

@@ -160,6 +160,9 @@ async def list_artifacts(db: DbSession, user: CurrentUser):
 async def create_artifact(data: ArtifactInput, db: DbSession, user: CurrentUser):
     scope(user)
     await bind_syntax(data, db, user)
+    if data.kind=='pipeline' and data.config.get('sourceSettings',{}).get('kind')=='datasource':
+        from app.api.datasources import owned as owned_source
+        await owned_source(data.config['sourceSettings']['datasource_id'],db,user)
     if data.kind in ("source_model", "target_model") and await db.scalar(select(StudioArtifact.id).where(*scope(user), StudioArtifact.kind == data.kind, StudioArtifact.name == data.name)):
         raise HTTPException(409, "同名物模型已存在，请刷新后选择该模型再修改，或使用其他名称。")
     item = StudioArtifact(id=str(uuid.uuid4()), owner_id=user["id"], external_user_id=user.get("external_user_id", ""),
@@ -176,6 +179,9 @@ async def update_artifact(artifact_id: str, data: ArtifactInput, db: DbSession, 
     if item.kind != data.kind:
         raise HTTPException(400, "不能修改配置类型")
     await bind_syntax(data, db, user, item)
+    if data.kind=='pipeline' and data.config.get('sourceSettings',{}).get('kind')=='datasource':
+        from app.api.datasources import owned as owned_source
+        await owned_source(data.config['sourceSettings']['datasource_id'],db,user)
     if data.kind in ("source_model", "target_model") and await db.scalar(select(StudioArtifact.id).where(*scope(user), StudioArtifact.kind == data.kind, StudioArtifact.name == data.name, StudioArtifact.id != artifact_id)):
         raise HTTPException(409, "同名物模型已存在，请使用其他名称。")
     result = await db.execute(update(StudioArtifact).where(StudioArtifact.id == artifact_id, *scope(user),

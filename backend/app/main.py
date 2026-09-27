@@ -27,7 +27,7 @@ from app.llm.ollama_health import check_ollama_health
 from app.tools import register_default_tools
 from fastapi.exceptions import RequestValidationError
 from app.services import studio_mcp
-from app.api import agent_studio
+from app.api import agent_studio, master_index, datasources
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 
@@ -108,6 +108,8 @@ app.include_router(realtime.router, prefix=prefix)
 app.include_router(applications.router, prefix=prefix)
 app.include_router(device_assistant.router, prefix=prefix)
 app.include_router(agent_studio.router, prefix=prefix)
+app.include_router(master_index.router, prefix=prefix)
+app.include_router(datasources.router, prefix=prefix)
 studio_mcp.mount(app)
 
 

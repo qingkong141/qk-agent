@@ -3,6 +3,7 @@ import json
 from datetime import datetime
 from typing import Literal
 from pydantic import BaseModel, Field, FiniteFloat, model_validator
+from app.services.datasource_schema import ReadInput
 
 
 class Node(BaseModel):
@@ -53,13 +54,17 @@ class Query(BaseModel):
 
 
 class Source(BaseModel):
-    kind: Literal['influx','json']
+    kind: Literal['influx','json','datasource']
+    datasource_id: str = Field(default='',max_length=36)
+    extraction: ReadInput | None = None
     query: Query
     deviceIds: list[str] = Field(max_length=100)
     mode: Literal['raw','metrics']
 
     @model_validator(mode='after')
     def dates(self):
+        if self.kind=='datasource' and (not self.datasource_id or self.extraction is None):
+            raise ValueError('请选择数据源和读取表/主题')
         if self.kind=='influx' and datetime.fromisoformat(self.query.startTime)>=datetime.fromisoformat(self.query.endTime):
             raise ValueError('结束时间必须晚于开始时间')
         return self
