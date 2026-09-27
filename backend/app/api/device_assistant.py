@@ -7,10 +7,10 @@ from datetime import datetime, timedelta, timezone
 import httpx
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field, model_validator
-from sqlalchemy import select, update
+from sqlalchemy import delete, select, update
 from sqlalchemy.exc import IntegrityError
 
-from app.api.datasets import identity, scope
+from app.api.datasets import NameInput, identity, scope
 from app.config import settings
 from app.dependencies import CurrentUser, DbSession
 from app.models.studio import StudioArtifact
@@ -231,3 +231,29 @@ async def thread(thread_id: str, db: DbSession, user: CurrentUser):
 @router.get('/knowledge')
 async def knowledge(user: CurrentUser):
     return service.KNOWLEDGE
+
+
+class RenameThread(NameInput):
+    expected_revision: int = Field(ge=1)
+
+
+@router.put('/threads/{thread_id}')
+async def rename_thread(thread_id: str, data: RenameThread, db: DbSession, user: CurrentUser):
+    item = await owned(thread_id, 'device_chat', db, user)
+    changed = await db.execute(update(StudioArtifact).where(StudioArtifact.id == item.id,
+        StudioArtifact.kind == 'device_chat', StudioArtifact.revision == data.expected_revision,
+        *scope(StudioArtifact, user)).values(name=data.name, revision=StudioArtifact.revision+1))
+    if changed.rowcount != 1: raise HTTPException(409, '对话已更新，请重新打开后操作')
+    await db.commit(); await db.refresh(item)
+    return info(item)
+
+
+@router.delete('/threads/{thread_id}')
+async def delete_thread(thread_id: str, data: Execute, db: DbSession, user: CurrentUser):
+    await owned(thread_id, 'device_chat', db, user)
+    changed = await db.execute(delete(StudioArtifact).where(StudioArtifact.id == thread_id,
+        StudioArtifact.kind == 'device_chat', StudioArtifact.revision == data.expected_revision,
+        *scope(StudioArtifact, user)))
+    if changed.rowcount != 1: raise HTTPException(409, '对话已更新，请重新打开后操作')
+    await db.commit()
+    return {'id': thread_id}

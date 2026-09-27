@@ -67,6 +67,33 @@ async def main():
         assert (await client.post(base+'/ask',json={'question':' '})).status_code==400
         assert service.analyze([])['count']==0
         assert service.analyze([{'time':'2026-09-27','value':None}])['missing']==1
+        path=f"{base}/threads/{t['id']}"
+        turns=t['turns']
+        for name in ['', '   ', 'a\nb', 'x'*121]:
+            assert (await client.put(path,json={'name':name,'expected_revision':t['revision']})).status_code==422
+        renamed=await client.put(path,json={'name':'  设备运行分析  ','expected_revision':t['revision']})
+        assert renamed.status_code==200,renamed.text
+        saved=renamed.json()
+        assert saved['name']=='设备运行分析' and saved['turns']==turns and saved['revision']==t['revision']+1
+        assert (await client.get(path)).json()==saved
+        assert (await client.put(path,json={'name':'stale','expected_revision':t['revision']})).status_code==409
+        assert (await client.request('DELETE',path,json={'expected_revision':t['revision']})).status_code==409
+        for owner in [dict(id='other',auth_type='jwt',external_user_id=''),dict(id='owner',auth_type='api_key',external_user_id='tenant2')]:
+            principal.update(owner)
+            assert (await client.put(path,json={'name':'foreign','expected_revision':saved['revision']})).status_code==404
+            assert (await client.request('DELETE',path,json={'expected_revision':saved['revision']})).status_code==404
+        principal.update(id='owner',auth_type='jwt',external_user_id='')
+        for item_id in [product,device]:
+            assert (await client.put(f'{base}/threads/{item_id}',json={'name':'wrong kind','expected_revision':1})).status_code==404
+            assert (await client.request('DELETE',f'{base}/threads/{item_id}',json={'expected_revision':1})).status_code==404
+        assert (await client.request('DELETE',path,json={'expected_revision':saved['revision']})).status_code==200
+        assert (await client.get(path)).status_code==404
+        assert all(v['id']!=t['id'] for v in (await client.get(base+'/threads')).json())
+        assert len((await client.get(base+'/catalog')).json()['products'])==1
+        assert len((await client.get(base+'/catalog')).json()['devices'])==1
+        plan=service.Plan(action='analyze',explanation='删除对话后查询',device_id=device,metric='battery',lower=40)
+        assert (await ask())['turns'][-1]['result']['count']==4
+        print('PASS: rename persistence/validation/revision/ownership, delete isolation and retained product/device/reports')
         print('PASS: product/device creation, execute-once, persistent report validation, measured trend/threshold, knowledge references and ownership')
     await engine.dispose()
 
