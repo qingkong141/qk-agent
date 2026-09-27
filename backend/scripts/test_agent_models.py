@@ -17,6 +17,7 @@ from app.api import agent_models as api, agent_studio as agents
 from app.db.session import get_db
 from app.dependencies import get_current_user
 from app.models.agent_model import AgentModel
+from app.models.mcp_service import MCPService
 from app.models.studio import StudioArtifact
 
 
@@ -24,6 +25,7 @@ async def main():
     engine = create_async_engine('sqlite+aiosqlite:///:memory:')
     async with engine.begin() as conn:
         await conn.run_sync(AgentModel.__table__.create)
+        await conn.run_sync(MCPService.__table__.create)
         await conn.run_sync(StudioArtifact.__table__.create)
     sessions = async_sessionmaker(engine, expire_on_commit=False)
     principal = dict(id='owner', auth_type='jwt', external_user_id='')

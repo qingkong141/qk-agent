@@ -28,6 +28,7 @@ from app.tools import register_default_tools
 from fastapi.exceptions import RequestValidationError
 from app.services import studio_mcp
 from app.api import agent_studio, agent_models, master_index, datasources, plugins
+from app.api import mcp_services, mcp_flows
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 
@@ -99,6 +100,8 @@ app.include_router(clinical_events.router, prefix=prefix)
 app.include_router(runtime.router, prefix=prefix)
 app.include_router(studio.router, prefix=prefix)
 app.include_router(agent_models.router, prefix=prefix)
+app.include_router(mcp_services.router, prefix=prefix)
+app.include_router(mcp_flows.router, prefix=prefix)
 app.include_router(semantic.router, prefix=prefix)
 app.include_router(syntax.router, prefix=prefix)
 app.include_router(protocol_debug.router, prefix=prefix)
