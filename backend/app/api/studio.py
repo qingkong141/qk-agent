@@ -2,7 +2,7 @@ import json
 import uuid
 from typing import Literal
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field, FiniteFloat, model_validator
 from sqlalchemy import delete, select, update
 
@@ -11,6 +11,7 @@ from app.models.studio import StudioArtifact
 from app.api.semantic import SemanticConfig, ThingModel
 from app.api.syntax import SyntaxConfig
 from app.api.pipeline import PipelineConfig as PipelineV2Config
+from app.services.application_schema import ApplicationConfig as ApplicationV2Config
 
 router = APIRouter(prefix="/studio", tags=["studio"])
 
@@ -101,6 +102,8 @@ class ArtifactInput(BaseModel):
             schema = SemanticConfig
         if self.kind == "pipeline" and self.config.get("schemaVersion") == 2:
             schema = PipelineV2Config
+        if self.kind == "application" and self.config.get("schemaVersion") == 2:
+            schema = ApplicationV2Config
         self.config = schema.model_validate(self.config).model_dump(by_alias=True)
         return self
 
@@ -188,10 +191,13 @@ async def update_artifact(artifact_id: str, data: ArtifactInput, db: DbSession, 
 @router.delete("/artifacts/{artifact_id}")
 async def delete_artifact(artifact_id: str, data: RevisionInput, db: DbSession, user: CurrentUser):
     item = await get_owned(artifact_id, db, user)
-    if item.kind not in ("mapping", "syntax", "pipeline"):
+    if item.kind not in ("mapping", "syntax", "pipeline", "application"):
         raise HTTPException(400, "当前仅支持删除转换器及数据管道")
+    if item.kind == 'application' and item.published_revision is not None:
+        raise HTTPException(409, '请先停用应用，再删除')
     result = await db.execute(delete(StudioArtifact).where(
-        StudioArtifact.id == artifact_id, *scope(user), StudioArtifact.revision == data.expected_revision))
+        StudioArtifact.id == artifact_id, *scope(user), StudioArtifact.revision == data.expected_revision,
+        *([StudioArtifact.published_revision.is_(None)] if item.kind == 'application' else [])))
     if result.rowcount != 1:
         await db.rollback()
         raise HTTPException(409, "配置已被修改，请刷新列表后重新删除")
@@ -200,10 +206,15 @@ async def delete_artifact(artifact_id: str, data: RevisionInput, db: DbSession, 
 
 
 @router.post("/artifacts/{artifact_id}/publish")
-async def publish_artifact(artifact_id: str, data: RevisionInput, db: DbSession, user: CurrentUser):
+async def publish_artifact(artifact_id: str, data: RevisionInput, db: DbSession, user: CurrentUser, request: Request):
     item = await get_owned(artifact_id, db, user)
     if item.kind != "application" or not item.config.get("widgets"):
         raise HTTPException(400, "当前只支持发布含组件的应用快照")
+    if item.config.get('schemaVersion') == 2:
+        from app.api.applications import read_source, check_widgets
+        config = ApplicationV2Config.model_validate(item.config)
+        result = await read_source(config.source, db, user, request.headers.get('X-Platform-Token'))
+        check_widgets(config, result)
     result = await db.execute(update(StudioArtifact).where(StudioArtifact.id == artifact_id, *scope(user),
         StudioArtifact.revision == data.expected_revision).values(published_revision=data.expected_revision, published_config=item.config))
     if result.rowcount != 1:
