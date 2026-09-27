@@ -3,6 +3,9 @@ import csv
 import io
 import json
 import uuid
+import zipfile
+from urllib.parse import quote
+from xml.sax.saxutils import escape
 from typing import Literal
 
 from fastapi import APIRouter, HTTPException, Query
@@ -76,7 +79,32 @@ async def info(item,db):
 @router.get('/rules')
 async def rules(user: CurrentUser):
     scope(MasterIndex,user)
-    return {'filename':'主索引编码规则.md','content':RULES}
+    return Response(rules_document(), media_type='application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+                    headers={'Content-Disposition': "attachment; filename=master-index-rules.docx; filename*=UTF-8''"+quote('主索引编码规则.docx')})
+
+
+def rules_document():
+    """Build a small editable Word document from the same authoritative rules."""
+    paragraphs = [('Title', '患者与设备主索引编码规则'),
+                  ('Normal', '适用范围：患者及设备主索引的编码、跨系统标识关联、查询与维护。')]
+    paragraphs.extend(('Normal', line) for line in RULES.splitlines() if line.strip() and not line.startswith('#'))
+    body = ''.join(f'<w:p><w:pPr><w:pStyle w:val="{style}"/></w:pPr><w:r><w:t xml:space="preserve">{escape(text)}</w:t></w:r></w:p>' for style,text in paragraphs)
+    output = io.BytesIO()
+    with zipfile.ZipFile(output, 'w', zipfile.ZIP_DEFLATED) as archive:
+        archive.writestr('[Content_Types].xml', '''<?xml version="1.0" encoding="UTF-8"?>
+<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/><Override PartName="/word/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml"/></Types>''')
+        archive.writestr('_rels/.rels', '''<?xml version="1.0" encoding="UTF-8"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/></Relationships>''')
+        archive.writestr('word/_rels/document.xml.rels', '''<?xml version="1.0" encoding="UTF-8"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/></Relationships>''')
+        archive.writestr('word/styles.xml', '''<?xml version="1.0" encoding="UTF-8"?>
+<w:styles xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+<w:style w:type="paragraph" w:default="1" w:styleId="Normal"><w:name w:val="Normal"/><w:pPr><w:spacing w:after="160" w:line="320" w:lineRule="auto"/><w:widowControl/></w:pPr><w:rPr><w:rFonts w:ascii="Calibri" w:hAnsi="Calibri" w:eastAsia="宋体"/><w:color w:val="000000"/><w:sz w:val="22"/><w:lang w:val="zh-CN" w:eastAsia="zh-CN"/></w:rPr></w:style>
+<w:style w:type="paragraph" w:styleId="Title"><w:name w:val="Title"/><w:basedOn w:val="Normal"/><w:next w:val="Normal"/><w:pPr><w:keepNext/><w:spacing w:after="280"/></w:pPr><w:rPr><w:rFonts w:eastAsia="微软雅黑"/><w:b/><w:sz w:val="32"/></w:rPr></w:style>
+</w:styles>''')
+        archive.writestr('word/document.xml', f'''<?xml version="1.0" encoding="UTF-8"?>
+<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body>{body}<w:sectPr><w:pgSz w:w="12240" w:h="15840"/><w:pgMar w:top="1134" w:right="1134" w:bottom="1134" w:left="1134" w:header="567" w:footer="567" w:gutter="0"/></w:sectPr></w:body></w:document>''')
+    return output.getvalue()
 
 
 @router.get('/export')

@@ -1,7 +1,10 @@
 """Master identity immutability, alias uniqueness, rollback, export and isolation."""
 import asyncio
+import io
 import os
 import sys
+import zipfile
+from xml.etree import ElementTree
 from pathlib import Path
 os.environ['DATABASE_URL']='sqlite+aiosqlite:///:memory:'
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]))
@@ -41,7 +44,20 @@ async def main():
         assert (await client.put(path,json={**original,'kind':'patient','expected_revision':2})).status_code==400
         assert (await client.request('DELETE',path,json={'expected_revision':1})).status_code==409
         exported=await client.get(base+'/export');assert 'ASSET-01' in exported.text and '电量' not in exported.text
-        assert 'UUID' in (await client.get(base+'/rules')).json()['content']
+        rules=await client.get(base+'/rules')
+        assert rules.status_code==200
+        assert rules.headers['content-type']=='application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+        assert 'master-index-rules.docx' in rules.headers['content-disposition']
+        with zipfile.ZipFile(io.BytesIO(rules.content)) as document:
+            assert document.testzip() is None
+            ns={'w':'http://schemas.openxmlformats.org/wordprocessingml/2006/main'}
+            xml=ElementTree.fromstring(document.read('word/document.xml'))
+            paragraphs=[''.join(p.itertext()) for p in xml.findall('.//w:p',ns)]
+            for line in api.RULES.splitlines():
+                if line.strip() and not line.startswith('#'): assert line in paragraphs
+            assert len([p for p in paragraphs if p[:1].isdigit()])==8
+            assert xml.find('.//w:pStyle',ns).get('{'+ns['w']+'}val')=='Title'
+            ElementTree.fromstring(document.read('word/styles.xml'))
         patient={**original,'kind':'patient','name':'就诊对象001'}
         assert (await client.post(base,json=patient)).json()['code'].startswith('PAT-')
         principal['id']='other'
