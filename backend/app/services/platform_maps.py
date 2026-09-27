@@ -41,7 +41,8 @@ async def read_map(headers,user,map_id=None,terminal_ids=''):
     host_token=headers.get('x-platform-token') or headers.get('X-Platform-Token')
     sid=headers.get('x-platform-session-id') or headers.get('X-Platform-Session-ID')
     if not host_token or not sid:raise HTTPException(401,'缺少平台定位会话，请重新登录后查询地图')
-    if len(sid)>200 or not re.fullmatch(r'[A-Za-z0-9_-]+',sid):raise HTTPException(400,'定位会话格式无效')
+    # SSO also issues percent-encoded opaque IDs; pass them unchanged like the platform SDK.
+    if len(sid)>500 or not re.fullmatch(r'(?:[A-Za-z0-9_+/=.-]|%[0-9A-Fa-f]{2})+',sid):raise HTTPException(400,'定位会话格式无效')
     if map_id is not None and (type(map_id) is not int or map_id<=0):raise HTTPException(400,'请选择有效地图编号')
     if len(terminal_ids)>1000 or terminal_ids and not re.fullmatch(r'[A-Za-z0-9_, -]+',terminal_ids):raise HTTPException(400,'终端编号格式无效')
     if not settings.PLATFORM_PM_BASE_URL or not settings.PLATFORM_PE_BASE_URL:raise HTTPException(503,'后台尚未配置PM/PE地图服务地址')
