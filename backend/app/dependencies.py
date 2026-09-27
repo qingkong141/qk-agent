@@ -1,6 +1,6 @@
 from typing import Annotated, Optional, TypedDict
 
-from fastapi import Depends, Header, HTTPException, status
+from fastapi import Depends, Header, HTTPException, Request, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from jose import JWTError, jwt
 from sqlalchemy import select
@@ -66,8 +66,13 @@ async def get_current_user(
     x_platform_token: Annotated[Optional[str], Header(alias="X-Platform-Token")] = None,
     x_api_key: Annotated[Optional[str], Header(alias="X-API-Key")] = None,
     x_end_user_id: Annotated[Optional[str], Header(alias="X-End-User-ID")] = None,
+    request: Request = None,
 ) -> dict:
     """Validate platform SSO, JWT, or API key credentials."""
+    from app.local_studio import local_studio_principal
+    local_user = local_studio_principal(request, x_platform_token)
+    if local_user:
+        return local_user
     if x_platform_token:
         from app.platform_auth import authenticate_platform
         return await authenticate_platform(db, x_platform_token)

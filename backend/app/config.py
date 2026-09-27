@@ -11,6 +11,7 @@ class Settings(BaseSettings):
 
     APP_NAME: str = "AI Agent"
     DEBUG: bool = False
+    LOCAL_STUDIO_NO_LOGIN: bool = False
     SECRET_KEY: str = "change-me-in-production"
     API_V1_PREFIX: str = "/api/v1"
     CORS_ORIGINS: str = "*"
@@ -58,6 +59,7 @@ class Settings(BaseSettings):
     LANGCHAIN_PROJECT: str = "ai-agent"
 
     UPLOAD_DIR: str = "./data/documents"
+    DATASET_DIR: str = "./data/datasets"
     LOG_DIR: str = "./data/logs"
 
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 60 * 24
