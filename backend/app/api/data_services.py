@@ -1,15 +1,16 @@
-"""Authenticated API access to explicitly saved pipeline output snapshots."""
+"""Owned pipeline result services with opt-in anonymous data reads."""
 import json
 import uuid
 from datetime import datetime, timezone
+from typing import Annotated
 
-from fastapi import APIRouter, HTTPException, Query, Response
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from pydantic import Field, JsonValue, model_validator
 from sqlalchemy import delete, select, update
 
 from app.api.datasets import NameInput, identity, scope
 from app.api.studio import RevisionInput
-from app.dependencies import CurrentUser, DbSession
+from app.dependencies import CurrentUser, DbSession, get_current_user, security
 from app.models.studio import StudioArtifact
 
 router = APIRouter(prefix="/studio/data-services", tags=["data-services"])
@@ -19,6 +20,7 @@ KIND = "data_service"
 class SettingsInput(NameInput, RevisionInput):
     description: str = Field(default="", max_length=1000)
     enabled: bool
+    require_login: bool = True
 
 
 class ResultInput(NameInput):
@@ -45,6 +47,7 @@ class ResultInput(NameInput):
 def info(item):
     config = item.config
     return {"id": item.id, "name": item.name, "revision": item.revision,
+            "require_login": config.get("require_login", True),
             **{key: config[key] for key in ("description", "enabled", "pipeline_id", "pipeline_name", "pipeline_revision", "captured_at", "fields")},
             "row_count": len(config["rows"]), "updated_at": item.updated_at.replace(tzinfo=timezone.utc) if item.updated_at.tzinfo is None else item.updated_at,
             "path": f"/studio/data-services/{item.id}/data"}
@@ -87,7 +90,7 @@ async def listing(db: DbSession, user: CurrentUser):
 @router.post("", status_code=201)
 async def create(data: ResultInput, db: DbSession, user: CurrentUser):
     config = await snapshot(data, db, user)
-    item = StudioArtifact(id=str(uuid.uuid4()), name=data.name, kind=KIND, config={**config, "enabled": True}, **identity(user))
+    item = StudioArtifact(id=str(uuid.uuid4()), name=data.name, kind=KIND, config={**config, "enabled": True, "require_login": True}, **identity(user))
     db.add(item)
     await db.commit()
     await db.refresh(item)
@@ -102,7 +105,7 @@ async def detail(item_id: str, db: DbSession, user: CurrentUser):
 @router.put("/{item_id}")
 async def configure(item_id: str, data: SettingsInput, db: DbSession, user: CurrentUser):
     item = await owned(item_id, db, user)
-    return await change(item, data.expected_revision, {"name": data.name, "config": {**item.config, "description": data.description, "enabled": data.enabled}}, db, user)
+    return await change(item, data.expected_revision, {"name": data.name, "config": {**item.config, "description": data.description, "enabled": data.enabled, "require_login": data.require_login}}, db, user)
 
 
 @router.put("/{item_id}/result")
@@ -111,7 +114,7 @@ async def replace_result(item_id: str, data: ResultInput, db: DbSession, user: C
     if item.config["pipeline_id"] != data.pipeline_id:
         raise HTTPException(400, "只能更新同一来源管道的结果")
     config = await snapshot(data, db, user)
-    return await change(item, data.expected_revision, {"name": data.name, "config": {**config, "enabled": item.config["enabled"]}}, db, user)
+    return await change(item, data.expected_revision, {"name": data.name, "config": {**config, "enabled": item.config["enabled"], "require_login": item.config.get("require_login", True)}}, db, user)
 
 
 @router.delete("/{item_id}")
@@ -126,10 +129,27 @@ async def remove(item_id: str, data: RevisionInput, db: DbSession, user: Current
     return {"id": item_id}
 
 
+async def reader(item_id: str, request: Request, db: DbSession):
+    item = await db.scalar(select(StudioArtifact).where(StudioArtifact.id == item_id, StudioArtifact.kind == KIND))
+    if not item:
+        raise HTTPException(404, "数据服务不存在")
+    if item.config.get("require_login", True) is False:
+        return None
+    return await get_current_user(credentials=await security(request), db=db, request=request,
+        x_platform_token=request.headers.get("X-Platform-Token"), x_api_key=request.headers.get("X-API-Key"),
+        x_end_user_id=request.headers.get("X-End-User-ID"))
+
+
 @router.get("/{item_id}/data")
-async def read_data(item_id: str, db: DbSession, user: CurrentUser, response: Response,
+async def read_data(item_id: str, db: DbSession, user: Annotated[dict | None, Depends(reader)], response: Response,
                     page: int = Query(default=1, ge=1), page_size: int = Query(default=20, ge=1, le=500)):
-    item = await owned(item_id, db, user)
+    item = await db.scalar(select(StudioArtifact).where(StudioArtifact.id == item_id, StudioArtifact.kind == KIND))
+    if not item:
+        raise HTTPException(404, "数据服务不存在")
+    if item.config.get("require_login", True) is not False:
+        if user is None:
+            raise HTTPException(401, "此数据服务需要登录后调用")
+        item = await owned(item_id, db, user)
     if not item.config["enabled"]:
         raise HTTPException(409, "数据服务已停用")
     response.headers["Cache-Control"] = "no-store"

@@ -32,6 +32,7 @@ async def main():
     app.include_router(studio.router)
     app.dependency_overrides[get_db] = db_override
     app.dependency_overrides[get_current_user] = user_override
+    app.dependency_overrides[data_services.reader] = user_override
     async with sessions() as db:
         db.add_all([StudioArtifact(id="pipe", name="输液处理管道", kind="pipeline", config={}, revision=2, owner_id="owner", external_user_id=""),
                     StudioArtifact(id="other-pipe", name="其他账号", kind="pipeline", config={}, revision=1, owner_id="other", external_user_id="")])
@@ -91,8 +92,39 @@ async def main():
             assert await db.scalar(select(StudioArtifact).where(StudioArtifact.id == "pipe"))
         empty = (await client.post(base, json={**body, "pipeline_revision": 3, "rows": []})).json()
         assert (await client.get(empty["path"])).json()["total"] == 0
+        assert empty["require_login"] is True
+        access_path = f"{base}/{empty['id']}"
+        # Use real read authentication: no headers must fail by default, including legacy records.
+        del app.dependency_overrides[data_services.reader]
+        assert (await client.get(empty["path"])).status_code == 401
+        async with sessions() as db:
+            legacy = await db.get(StudioArtifact, empty["id"])
+            legacy.config = {key: value for key, value in legacy.config.items() if key != "require_login"}
+            await db.commit()
+        assert (await client.get(access_path)).json()["require_login"] is True
+        assert (await client.get(empty["path"])).status_code == 401
+        public_settings = {"name": empty["name"], "enabled": True, "require_login": False, "expected_revision": 1}
+        assert (await client.put(access_path, json=public_settings)).status_code == 200
+        assert (await client.get(empty["path"])).status_code == 200
+        # Public mode ignores unrelated/expired caller credentials, but never opens management.
+        assert (await client.get(empty["path"], headers={"X-Platform-Token": "expired"})).status_code == 200
+        del app.dependency_overrides[get_current_user]
+        assert (await client.get(base)).status_code == 401
+        assert (await client.get(access_path)).status_code == 401
+        assert (await client.put(access_path, json=public_settings)).status_code == 401
+        assert (await client.request("DELETE", access_path, json={"expected_revision": 2})).status_code == 401
+        app.dependency_overrides[get_current_user] = user_override
+        replaced = await client.put(access_path + "/result", json={**body, "pipeline_revision": 3, "expected_revision": 2})
+        assert replaced.json()["require_login"] is False
+        assert (await client.get(empty["path"])).json()["rows"] == rows
+        assert (await client.put(access_path, json={**public_settings, "enabled": False, "expected_revision": 3})).status_code == 200
+        assert (await client.get(empty["path"])).status_code == 409
+        assert (await client.put(access_path, json={**public_settings, "expected_revision": 4})).status_code == 200
+        assert (await client.get(empty["path"])).status_code == 200
+        assert (await client.put(access_path, json={**public_settings, "require_login": True, "expected_revision": 5})).status_code == 200
+        assert (await client.get(empty["path"])).status_code == 401
     await engine.dispose()
-    print("PASS: snapshot values/pagination, validation limits, lifecycle and stale revisions, source version guards, account/end-user isolation, deletion preserves pipeline, empty results")
+    print("PASS: snapshots/pagination, limits, lifecycle/revisions, ownership, default/legacy authentication, opt-in anonymous data with protected management, mode preservation and revocation")
 
 
 if __name__ == "__main__":
