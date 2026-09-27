@@ -8,6 +8,7 @@ import math
 import sqlite3
 import sys
 import time
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from fastapi import HTTPException
@@ -76,6 +77,17 @@ def execute(job):
                                 "revision":source["revision"], "row_count":len(rows), "sha256":source["sha256"]})
         connection.commit()
         connection.execute("PRAGMA query_only=ON")
+        functions = FUNCTIONS.copy()
+        if job.get("exploration"):
+            def epoch(value):
+                if value is None:
+                    return None
+                parsed = datetime.fromisoformat(value)
+                if parsed.tzinfo is None:
+                    parsed = parsed.replace(tzinfo=timezone(timedelta(hours=8)))
+                return parsed.timestamp()
+            connection.create_function("studio_epoch", 1, epoch, deterministic=True)
+            functions.add("studio_epoch")
         denied = False
 
         def authorize(action, arg1, arg2, database, trigger):
@@ -85,7 +97,7 @@ def execute(job):
                 # SQLite may omit the database name for COUNT(*) reads.
                 allowed = database in ("main", None) and (arg1 or "").lower() in tables
             elif action == sqlite3.SQLITE_FUNCTION:
-                allowed = (arg2 or "").lower() in FUNCTIONS
+                allowed = (arg2 or "").lower() in functions
             if not allowed:
                 denied = True
             return sqlite3.SQLITE_OK if allowed else sqlite3.SQLITE_DENY
@@ -99,7 +111,7 @@ def execute(job):
         connection.set_authorizer(authorize)
         connection.set_progress_handler(progress, 1000)
         try:
-            cursor = connection.execute(job["sql"])
+            cursor = connection.execute(job["sql"], job.get("params", {}))
             if not cursor.description:
                 raise HTTPException(400, "请输入返回数据的SELECT查询")
             columns = [column[0] for column in cursor.description]

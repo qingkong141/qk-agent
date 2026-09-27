@@ -99,12 +99,16 @@ def run_worker(job):
 
 async def execute(data, db, user):
     sources = await sources_for(data, db, user)
+    return await execute_job(sources, sql=data.sql, row_limit=data.row_limit)
+
+
+async def execute_job(sources, **options):
     try:
         await asyncio.wait_for(slots.acquire(), timeout=2)
     except TimeoutError:
         raise HTTPException(429, "查询任务繁忙，请稍后重试")
     try:
-        return await run_in_threadpool(run_worker, {"sql":data.sql, "row_limit":data.row_limit, "sources":sources})
+        return await run_in_threadpool(run_worker, {**options, "sources":sources})
     finally:
         slots.release()
 
