@@ -18,6 +18,7 @@ from app.api.datasets import NameInput, identity, owned, read_rows, scope, stora
 from app.dependencies import CurrentUser, DbSession
 from app.models.data_model import DataModel, ThemeDomain
 from app.models.dataset import DatasetFile
+from app.models.offline_query import OfflineQuery
 
 router = APIRouter(prefix="/studio/modeling", tags=["modeling"])
 Identifier = r"^[a-zA-Z_][a-zA-Z0-9_]{0,63}$"
@@ -66,7 +67,7 @@ async def owned_entry(cls, item_id, db, user, lock=False):
         return await owned(cls, item_id, db, user, lock=lock)
     except HTTPException as error:
         if error.status_code == 404:
-            raise HTTPException(404, "主题域、模型或数据文件不存在")
+            raise HTTPException(404, "主题域、模型、查询或数据文件不存在")
         raise
 
 
@@ -222,6 +223,8 @@ async def remove_domain(item_id: str, db: DbSession, user: CurrentUser):
     item = await owned_entry(ThemeDomain, item_id, db, user, lock=True)
     if await db.scalar(select(DataModel.id).where(DataModel.domain_id == item_id).limit(1)):
         raise HTTPException(409, "主题域下还有模型，请先移动或删除模型")
+    if await db.scalar(select(OfflineQuery.id).where(OfflineQuery.domain_id == item_id).limit(1)):
+        raise HTTPException(409, "主题域下还有离线查询，请先移动或删除查询")
     await db.delete(item)
     await db.commit()
     return {"id": item_id}

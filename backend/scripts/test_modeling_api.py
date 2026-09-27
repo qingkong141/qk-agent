@@ -20,6 +20,7 @@ from app.db.session import get_db
 from app.dependencies import get_current_user
 from app.models.dataset import Dataset, DatasetFile, DatasetFolder
 from app.models.data_model import DataModel, ThemeDomain
+from app.models.offline_query import OfflineQuery
 
 
 def check_validation_and_migration():
@@ -54,7 +55,7 @@ async def main():
     def foreign_keys(connection, _):
         connection.execute("PRAGMA foreign_keys=ON")
     async with engine.begin() as connection:
-        for model in (DatasetFolder, Dataset, DatasetFile, ThemeDomain, DataModel):
+        for model in (DatasetFolder, Dataset, DatasetFile, ThemeDomain, DataModel, OfflineQuery):
             await connection.run_sync(model.__table__.create)
     sessions = async_sessionmaker(engine, expire_on_commit=False)
     principal = {"id": "owner", "auth_type": "jwt", "external_user_id": ""}

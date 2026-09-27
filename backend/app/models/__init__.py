@@ -1,6 +1,7 @@
 from app.models.studio import StudioArtifact
 from app.models.dataset import Dataset, DatasetFile, DatasetFolder
 from app.models.data_model import DataModel, ThemeDomain
+from app.models.offline_query import OfflineQuery
 from app.models.agent_config import AgentConfig
 from app.models.clinical_decision import ClinicalDecision
 from app.models.conversation import AgentRun, Conversation, Message
@@ -14,6 +15,7 @@ __all__ = [
     "StudioArtifact",
     "Dataset", "DatasetFile", "DatasetFolder",
     "DataModel", "ThemeDomain",
+    "OfflineQuery",
     "User",
     "Conversation",
     "Message",
