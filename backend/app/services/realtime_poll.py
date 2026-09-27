@@ -1,5 +1,6 @@
 """Single-process platform readers. Session credentials stay in memory only."""
 import asyncio
+import re
 from datetime import datetime, timedelta, timezone
 from urllib.parse import quote
 import httpx
@@ -39,10 +40,17 @@ def metric_value(report, metric):
 
 async def fetch(source, token):
     from app.api.realtime import Batch
+    from app.services.realtime_engine import timestamp, iso
     now = datetime.now(ZONE)
+    device_id = source['device_id']
+    # Platform MAC identifiers are upper-case in DM_Device and lower-case in InfluxDB.
+    # Ordinary business identifiers retain their case-sensitive identity.
+    hardware_id = bool(re.fullmatch(r'[0-9a-fA-F]{12}', device_id))
+    variants = set((device_id, device_id.lower(), device_id.upper())) if hardware_id else {device_id}
+    predicate = ' OR '.join(f"deviceId='{value}'" for value in sorted(variants)) if device_id else ''
     params = {'tableName': source['table'], 'startTime': (now-timedelta(minutes=source['lookback_minutes'])).strftime('%Y-%m-%d %H:%M:%S'),
               'endTime': now.strftime('%Y-%m-%d %H:%M:%S'), 'pageIndex': 1, 'pageSize': 50,
-              'searchScript': f"deviceId='{source['device_id']}'" if source['device_id'] else ''}
+              'searchScript': '('+predicate+')' if len(variants)>1 else predicate}
     collected = []
     async with httpx.AsyncClient(timeout=15, trust_env=False, follow_redirects=False) as client:
         while True:
@@ -63,8 +71,13 @@ async def fetch(source, token):
             if not rows or params['pageIndex'] >= 20: raise ValueError('平台分页数据不完整，本轮未计算')
             params['pageIndex'] += 1
     points = [{'deviceId': str(row['deviceId']), 'time': row['time'], 'value': metric_value(row['value'], source['metric'])}
-              for row in collected if not source['device_id'] or str(row.get('deviceId')) == source['device_id']]
-    return [row.model_dump() for row in Batch(rows=points).rows] if points else []
+              for row in collected if not device_id or str(row.get('deviceId')) in variants]
+    validated = [row.model_dump() for row in Batch(rows=points).rows] if points else []
+    # The platform returns newest first, sometimes with MM/DD/YYYY timestamps.
+    # Applications use the last point as "latest" and draw trends in input order.
+    for row in validated:
+        row['time'] = iso(timestamp(row['time']))
+    return sorted(validated, key=lambda row: (row['time'], row['deviceId']))
 
 
 async def loop(item_id, config, token, user):
