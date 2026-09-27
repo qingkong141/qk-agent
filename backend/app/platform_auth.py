@@ -57,7 +57,10 @@ async def validate_platform_identity(token: str) -> str:
             raise ValueError()
         expires = float(claims.get('exp', 0))
         valid_from = float(claims.get('nbf', 0))
-        if not math.isfinite(expires) or not math.isfinite(valid_from) or expires <= time.time() or valid_from > time.time():
+        now = time.time()
+        # SSO-issued tokens can start slightly ahead of the local host clock.
+        # Keep expiry strict and allow only a small skew on the not-before time.
+        if not math.isfinite(expires) or not math.isfinite(valid_from) or expires <= now or valid_from > now + 30:
             raise ValueError()
     except (JWTError, ValueError, TypeError):
         raise HTTPException(401, '平台令牌缺少有效身份或已过期，请重新登录') from None

@@ -182,6 +182,15 @@ async def main():
             checks += 1
 
             remote_mode = 'accept'
+            now = int(time.time())
+            with patch.object(platform_auth.time, 'time', return_value=now):
+                for ahead in (1, 30):
+                    response = await client.get('/whoami', headers={'X-Platform-Token': platform_token('2', nbf=now+ahead)})
+                    assert response.status_code == 200
+                for claims in ({'nbf': now+31}, {'exp': now}, {'exp': now-1, 'nbf': now+1}):
+                    response = await client.get('/whoami', headers={'X-Platform-Token': platform_token(**claims)})
+                    assert response.status_code == 401
+            checks += 5
             malformed_claims = [
                 {'exp': int(time.time()) - 1}, {'nbf': int(time.time()) + 600},
                 {'exp': None}, {'exp': 'nan'}, {'exp': 'inf'}, {'nbf': 'nan'},
