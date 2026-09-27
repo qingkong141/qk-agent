@@ -1,0 +1,7 @@
+{
+  "name": "orgaiot-protocol-runtime",
+  "private": true,
+  "version": "1.0.0",
+  "description": "Isolated JSONata protocol plugin worker",
+  "dependencies": { "jsonata": "2.2.2" }
+}

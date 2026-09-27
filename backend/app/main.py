@@ -27,7 +27,7 @@ from app.llm.ollama_health import check_ollama_health
 from app.tools import register_default_tools
 from fastapi.exceptions import RequestValidationError
 from app.services import studio_mcp
-from app.api import agent_studio, master_index, datasources
+from app.api import agent_studio, master_index, datasources, plugins
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 
@@ -40,6 +40,8 @@ async def lifespan(app: FastAPI):
     Path(settings.LOG_DIR).mkdir(parents=True, exist_ok=True)
     await init_db()
     await ensure_schema_patches()
+    from app.services import plugin_runtime
+    await plugin_runtime.startup()
     from app.services import realtime_poll
     await realtime_poll.startup()
     register_default_tools()
@@ -55,6 +57,7 @@ async def lifespan(app: FastAPI):
     async with studio_mcp.lifespan():
         yield
     await realtime_poll.shutdown()
+    await plugin_runtime.shutdown()
     logger.info("Shutting down")
 
 
@@ -110,6 +113,7 @@ app.include_router(device_assistant.router, prefix=prefix)
 app.include_router(agent_studio.router, prefix=prefix)
 app.include_router(master_index.router, prefix=prefix)
 app.include_router(datasources.router, prefix=prefix)
+app.include_router(plugins.router, prefix=prefix)
 studio_mcp.mount(app)
 
 
