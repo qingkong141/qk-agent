@@ -16,12 +16,13 @@ from app.api import datasets
 from app.db.session import get_db
 from app.dependencies import get_current_user
 from app.models.dataset import Dataset, DatasetFile, DatasetFolder
+from app.models.data_model import DataModel, ThemeDomain
 
 
 async def main():
     engine = create_async_engine("sqlite+aiosqlite:///:memory:")
     async with engine.begin() as connection:
-        for model in (DatasetFolder, Dataset, DatasetFile):
+        for model in (DatasetFolder, Dataset, DatasetFile, ThemeDomain, DataModel):
             await connection.run_sync(model.__table__.create)
     sessions = async_sessionmaker(engine, expire_on_commit=False)
     principal = {"id": "owner", "auth_type": "jwt", "external_user_id": ""}

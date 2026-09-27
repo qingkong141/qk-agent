@@ -19,6 +19,7 @@ from starlette.concurrency import run_in_threadpool
 from app.config import settings
 from app.dependencies import CurrentUser, DbSession
 from app.models.dataset import Dataset, DatasetFile, DatasetFolder
+from app.models.data_model import DataModel
 
 router = APIRouter(prefix="/datasets", tags=["datasets"])
 Modality = Literal["structured", "text", "image", "video", "sensor"]
@@ -314,6 +315,9 @@ async def preview(item_id: str, file_id: str, db: DbSession, user: CurrentUser, 
 async def delete_file(item_id: str, file_id: str, db: DbSession, user: CurrentUser):
     await owned(Dataset, item_id, db, user, lock=True)
     item = await owned_file(item_id, file_id, db, user)
+    await owned(DatasetFile, file_id, db, user, lock=True)
+    if await db.scalar(select(DataModel.id).where(DataModel.source_file_id == file_id).limit(1)):
+        raise HTTPException(409, "文件已被数据模型引用，请先解除绑定或删除模型")
     await db.execute(delete(DatasetFile).where(DatasetFile.id == item.id, *scope(DatasetFile, user)))
     await db.commit()
     try:

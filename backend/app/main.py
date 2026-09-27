@@ -12,7 +12,7 @@ from app.api import (
     agents, auth, chat, clinical_decisions, clinical_events,
     context, conversations, documents, monitor, runtime, studio, tools, workflows,
 )
-from app.api import semantic, syntax, protocol_debug, datasets
+from app.api import semantic, syntax, protocol_debug, datasets, modeling
 from app.config import settings
 from app.core.exceptions import (
     global_exception_handler,
@@ -93,6 +93,7 @@ app.include_router(semantic.router, prefix=prefix)
 app.include_router(syntax.router, prefix=prefix)
 app.include_router(protocol_debug.router, prefix=prefix)
 app.include_router(datasets.router, prefix=prefix)
+app.include_router(modeling.router, prefix=prefix)
 
 
 @app.get("/health")
