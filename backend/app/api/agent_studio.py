@@ -34,7 +34,7 @@ async def available_models():
 class Config(BaseModel):
     model: str = Field(min_length=1,max_length=150)
     prompt: str = Field(min_length=1,max_length=5000)
-    services: list[str] = Field(min_length=1,max_length=10)
+    services: list[str] = Field(min_length=1,max_length=len(studio_mcp.SERVERS))
 
     @model_validator(mode='after')
     def valid(self):

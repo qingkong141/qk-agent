@@ -18,6 +18,9 @@ class Settings(BaseSettings):
     PLATFORM_SSO_BASE_URL: str = ""
     PLATFORM_SYSTEM_CODE: str = "AIOT"
     PLATFORM_DEVICE_BASE_URL: str = ""
+    PLATFORM_PM_BASE_URL: str = ""
+    PLATFORM_PE_BASE_URL: str = ""
+    PLATFORM_MAP_SYS_TYPE: str = ""
 
     DATABASE_URL: str = "sqlite+aiosqlite:///./data/agent.db"
 

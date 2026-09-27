@@ -82,10 +82,11 @@ async def main():
         assert (await remove(2)).status_code == 404
         remaining = {x['id'] for x in (await client.get('/studio/artifacts')).json()}
         assert created['id'] not in remaining and model['id'] in remaining and item['id'] in remaining
-        assert (await client.request('DELETE', url, json={"expected_revision": 2})).status_code == 400
+        assert (await client.request('DELETE', url, json={"expected_revision": 2})).status_code == 200
+        assert item['id'] not in {x['id'] for x in (await client.get('/studio/artifacts')).json()}
     await engine.dispose()
     print('PASS: create, read, update, publish snapshot isolation, stale writes, stale publish, owner isolation, external-user isolation, missing identity, unpublish, malformed config, empty name')
-    print('PASS: delete converter, stale delete, owner/end-user isolation, missing identity/revision, repeat delete, model/application preservation')
+    print('PASS: delete converter, stale delete, owner/end-user isolation, missing identity/revision, repeat delete, model preservation and stopped application deletion')
 
 
 asyncio.run(main())

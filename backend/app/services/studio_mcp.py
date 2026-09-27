@@ -1,4 +1,4 @@
-"""Ten authenticated, read-only MCP services backed by existing studio/platform data."""
+"""Authenticated, read-only MCP services backed by studio and platform data."""
 from contextlib import AsyncExitStack, asynccontextmanager
 from typing import Literal
 
@@ -29,6 +29,7 @@ DEFINITIONS = [
     ('realtime', '实时任务', '查询任务运行状态和最近结果'),
     ('data-services', '数据服务', '读取治理后的开放接口结果'),
     ('locations', '设备位置', '查询设备登记位置及对应设备编号'),
+    ('maps', '地图服务', '查询平台授权地图与终端坐标，需要PM/PE定位服务在线'),
 ]
 SERVERS = {key: FastMCP(name, stateless_http=True, json_response=True, streamable_http_path='/',
     transport_security=TransportSecuritySettings(allowed_hosts=['localhost:*', '127.0.0.1:*', '[::1]:*'],
@@ -153,6 +154,14 @@ async def device_location(ctx: Context, name: str='', source: Literal['studio','
     return {'locations':[{'id':v['id'],'name':v['name'],'code':v['code'],'location':v.get('location') or None} for v in result['devices']], 'total':result.get('total',len(result['devices']))}
 
 
+@SERVERS['maps'].tool()
+async def platform_map(ctx: Context, map_id: int|None=None, terminal_ids: str='') -> dict:
+    """查询当前用户获授权的地图目录，指定map_id读取终端坐标；终端编号可逗号分隔。地图服务不可用时如实反馈，不使用登记位置冒充坐标。"""
+    from app.services.platform_maps import read_map
+    request,user=principal(ctx)
+    return await read_map(request.headers,user,map_id,terminal_ids)
+
+
 class AuthenticatedMCP:
     def __init__(self,app): self.app=app
     async def __call__(self,scope_,receive,send):
@@ -193,7 +202,7 @@ def catalog():
 async def connect(service_id,headers):
     if service_id not in SERVERS: raise ValueError('MCP服务不存在')
     from app.main import app
-    allowed={key:value for key,value in headers.items() if key.lower() in ('authorization','x-platform-token','x-api-key','x-end-user-id')}
+    allowed={key:value for key,value in headers.items() if key.lower() in ('authorization','x-platform-token','x-api-key','x-end-user-id','x-platform-session-id')}
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app),headers=allowed,timeout=30) as client:
         async with streamable_http_client('http://127.0.0.1:8017'+settings.API_V1_PREFIX+'/studio/mcp/'+service_id+'/',http_client=client) as (reader,writer,_):
             async with ClientSession(reader,writer) as session:
