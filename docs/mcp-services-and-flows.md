@@ -105,3 +105,9 @@ ALTER TABLE studio_mcp_services ADD COLUMN stdio_profile VARCHAR(100) DEFAULT ''
 ![高德地点结果地图](evidence/mcp-231/04-amap-map-preview.png)
 
 接口依据：[高德静态地图](https://lbs.amap.com/api/webservice/guide/api/staticmaps)、[地点标注链接](https://lbs.amap.com/api/uri-api/guide/mobile-web/point)、[JS API 密钥要求](https://lbs.amap.com/api/javascript-api-v2/guide/abc/jscode)。
+
+智能体调试对话同样会在回答中显示已授权高德工具的成功地点结果，原始工具记录保留在折叠区；错误、空结果、非高德服务及无效坐标不会生成地图。地图直接取自工具结果，不解析模型文字中的坐标或HTML。流式进度和最终回答重复携带同一结果时，不重复请求地图或重置用户选择。
+
+`scripts/check-agent-map.cjs` 已使用在线 `deepseek-flash`、真实高德 MCP 和地图接口验证完整对话：一次工具调用、一次地图请求，正常显示医院的两个候选地点。保留智能体“医院位置查询助手”，ID `eec18394-9884-4902-a3d2-32ab3bf80055`。前端相关8项单元测试、类型检查及后台智能体执行回归通过。
+
+![智能体回答中的地点地图](evidence/mcp-231/05-agent-map.png)
