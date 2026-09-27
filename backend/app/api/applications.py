@@ -45,15 +45,17 @@ def check_widgets(config, result):
         if value is None: return ''
         if isinstance(value,bool): return 'true' if value else 'false'
         return str(value)
-    for widget in config.widgets:
+    for widget in config.all_widgets():
         required=[widget.filterField] if widget.filterField else []
         if widget.kind=='table': required+=widget.columns
         if widget.kind in ('line','bar'): required+=[widget.field,widget.xField]+([widget.groupField] if widget.groupField else [])
         if widget.kind=='metric' and widget.aggregation!='count': required+=[widget.field]
+        if widget.kind=='select': required+=[widget.field]
+        if widget.action.valueField: required+=[widget.action.valueField]
         if any(field not in fields for field in required):
             raise HTTPException(422,f'“{widget.title}”的绑定字段不存在，请同步数据并重新选择')
         if widget.kind in ('line','bar','metric') and not (widget.kind=='metric' and widget.aggregation=='count'):
-            rows=[r for r in result['rows'] if not widget.filterField or filter_text(r.get(widget.filterField))==widget.filterValue]
+            rows=[r for r in result['rows'] if widget.filterVariable or not widget.filterField or filter_text(r.get(widget.filterField))==widget.filterValue]
             if any(r.get(widget.field) is not None and (isinstance(r[widget.field],bool) or not isinstance(r[widget.field],(int,float))) for r in rows):
                 raise HTTPException(422,f'“{widget.title}”需要数值字段，请先治理数据类型')
 
@@ -67,4 +69,4 @@ async def data(source: Binding, db:DbSession, user:CurrentUser, request:Request)
 async def debug(config:ApplicationConfig, db:DbSession, user:CurrentUser, request:Request):
     result=await read_source(config.source,db,user,request.headers.get('X-Platform-Token'))
     check_widgets(config,result)
-    return {**result,'checks':[{'id':w.id,'title':w.title,'status':'passed'} for w in config.widgets]}
+    return {**result,'checks':[{'id':w.id,'title':w.title,'status':'passed'} for w in config.all_widgets()]}

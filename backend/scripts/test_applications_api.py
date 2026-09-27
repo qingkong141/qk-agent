@@ -49,6 +49,17 @@ async def main():
         assert (await client.post(base+'/data',json={'kind':'snapshot','rows':[{'value':False},{'value':None}]})).status_code==200
         assert (await client.post(base+'/debug',json={**cfg,'refreshSeconds':2})).status_code==422
         assert (await client.post(base+'/debug',json={**cfg,'widgets':[cfg['widgets'][0],cfg['widgets'][0]]})).status_code==422
+        page_widget={**cfg['widgets'][0],'id':'details-metric','filterField':'deviceId','filterVariable':'device'}
+        table={**cfg['widgets'][1],'action':{'kind':'navigate','page':'details','variable':'device','valueField':'deviceId'}}
+        multi={**cfg,'widgets':[table],'variables':[{'name':'device','label':'设备','defaultValue':''}],
+               'pages':[{'id':'details','title':'详情','widgets':[page_widget]}]}
+        good=await client.post(base+'/debug',json=multi);assert good.status_code==200,good.text
+        assert len(good.json()['checks'])==2
+        assert (await client.post(base+'/debug',json={**multi,'variables':[]})).status_code==422
+        assert (await client.post(base+'/debug',json={**multi,'pages':[]})).status_code==422
+        invalid_page={**multi,'pages':[{'id':'details','title':'详情','widgets':[{**page_widget,'field':'missing'}]}]}
+        assert (await client.post(base+'/debug',json=invalid_page)).status_code==422
+        assert (await client.post(base+'/debug',json={**multi,'variables':[{'name':'constructor','label':'错误','defaultValue':''}]})).status_code==422
         rt=(await client.post(base+'/data',json={'kind':'realtime','id':'rt'})).json()
         assert rt['source_status']=='已停止' and rt['rows'][0]['value']==55
         created=await client.post('/studio/artifacts',json={'kind':'application','name':'设备应用','config':cfg});assert created.status_code==201,created.text

@@ -208,7 +208,7 @@ async def delete_artifact(artifact_id: str, data: RevisionInput, db: DbSession, 
 @router.post("/artifacts/{artifact_id}/publish")
 async def publish_artifact(artifact_id: str, data: RevisionInput, db: DbSession, user: CurrentUser, request: Request):
     item = await get_owned(artifact_id, db, user)
-    if item.kind != "application" or not item.config.get("widgets"):
+    if item.kind != "application" or not (item.config.get("widgets") or any(page.get('widgets') for page in item.config.get('pages',[]))):
         raise HTTPException(400, "当前只支持发布含组件的应用快照")
     if item.config.get('schemaVersion') == 2:
         from app.api.applications import read_source, check_widgets
