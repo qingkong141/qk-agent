@@ -38,6 +38,7 @@ class ReadInput(BaseModel):
     limit: int = Field(default=100,ge=1,le=1000)
     product_field: str = Field(default='productKey',max_length=128,pattern=r'^[a-zA-Z_][a-zA-Z0-9_.:-]*$')
     products: list[str] = Field(default_factory=list,max_length=30)
+    lookback_minutes: int = Field(default=60,ge=1,le=43200)
 
     @model_validator(mode='after')
     def product_size(self):

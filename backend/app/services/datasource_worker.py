@@ -56,11 +56,11 @@ def execute(c,password,operation,read=None):
         if read:
             # One measurement, optionally qualified by retention policy; no arbitrary InfluxQL.
             if len(read.resource.split('.'))>2:raise ValueError('InfluxDB请输入表名或保留策略.表名')
-            query='SELECT * FROM '+identifier(read.resource)
+            query='SELECT * FROM '+identifier(read.resource)+f' WHERE time >= now() - {read.lookback_minutes}m'
             if read.products:
                 field=identifier(read.product_field)
                 params={f'product{i}':value for i,value in enumerate(read.products)}
-                query+=' WHERE ('+' OR '.join(f'{field} = ${key}' for key in params)+')'
+                query+=' AND ('+' OR '.join(f'{field} = ${key}' for key in params)+')'
             query+=f' ORDER BY time DESC LIMIT {read.limit+1}'
         with httpx.Client(timeout=15,trust_env=False,follow_redirects=False,auth=(c.username,password) if c.username else None) as client:
             with client.stream('GET',f'{"https" if c.tls else "http"}://{c.host}:{c.port}/query',params={'db':c.database,'q':query,'params':json.dumps(params)}) as response:
@@ -79,7 +79,7 @@ def execute(c,password,operation,read=None):
             names=[str(row[0]) for s in series for row in s.get('values',[])]
             return {'resources':names[:500],'truncated':len(names)>500}
         rows=[{**s.get('tags',{}),**dict(zip(s['columns'],row))} for s in series for row in s.get('values',[])]
-        return {'rows':rows,'selection':'InfluxDB服务端产品条件过滤，按时间倒序；未指定保留策略时读取数据库默认策略'}
+        return {'rows':rows,'selection':f'InfluxDB最近{read.lookback_minutes}分钟，服务端产品条件过滤，时间倒序；未指定保留策略时使用数据库默认策略'}
     if kind in ('mysql','polardb-mysql'):
         import pymysql
         return dbapi(pymysql.connect(host=c.host,port=c.port,user=c.username,password=password,database=c.database or None,

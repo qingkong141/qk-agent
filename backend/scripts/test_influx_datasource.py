@@ -22,6 +22,7 @@ class Server(BaseHTTPRequestHandler):
         elif q.startswith('SHOW'):body={'results':[{'series':[{'columns':['name'],'values':[['m_gatewayflow']]}]}]}
         else:
             assert q.startswith('SELECT * FROM "rp_90days"."m_gatewayflow"')
+            assert ' WHERE time >= now() - 120m AND (' in q
             assert q.endswith('ORDER BY time DESC LIMIT 3')
             bindings=json.loads(query['params'][0]);assert bindings=={'product0':"P' OR true",'product1':'P2'}
             assert "P'" not in q and '"productKey" = $product0' in q
@@ -34,9 +35,14 @@ async def main():
     try:
         assert (await run(item,'test'))['connected']
         assert (await run(item,'catalog'))['resources']==['m_gatewayflow']
-        result=await run(item,'read',ReadInput(resource='rp_90days.m_gatewayflow',limit=2,products=["P' OR true",'P2']))
+        result=await run(item,'read',ReadInput(resource='rp_90days.m_gatewayflow',limit=2,products=["P' OR true",'P2'],lookback_minutes=120))
         assert result['rows'][0]['value']==0 and result['rows'][1]['value'] is None and result['truncated']
         assert not (await run(item,'read',ReadInput(resource='empty')))['rows']
+        assert 'time >= now() - 60m' in Server.calls[-1]['q'][0]
+        for invalid in [0,43201,'1;DROP DATABASE metrics']:
+            try:ReadInput(resource='m_gatewayflow',lookback_minutes=invalid)
+            except ValueError:pass
+            else:raise AssertionError('invalid time window accepted')
         for resource in ['bad','large','db.rp.table']:
             try:await run(item,'read',ReadInput(resource=resource))
             except HTTPException as e:assert e.status_code==502 and 'upstream diagnostic' not in e.detail and 'test-password' not in e.detail
