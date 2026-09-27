@@ -12,7 +12,7 @@ from app.api import (
     agents, auth, chat, clinical_decisions, clinical_events,
     context, conversations, documents, monitor, runtime, studio, tools, workflows,
 )
-from app.api import semantic, syntax, protocol_debug, datasets, modeling, offline, exploration, insights, data_services
+from app.api import semantic, syntax, protocol_debug, datasets, modeling, offline, exploration, insights, data_services, realtime
 from app.config import settings
 from app.core.exceptions import (
     global_exception_handler,
@@ -38,6 +38,8 @@ async def lifespan(app: FastAPI):
     Path(settings.LOG_DIR).mkdir(parents=True, exist_ok=True)
     await init_db()
     await ensure_schema_patches()
+    from app.services import realtime_poll
+    await realtime_poll.startup()
     register_default_tools()
     if settings.LLM_PROVIDER == "ollama" or settings.EMBEDDING_PROVIDER == "ollama":
         ollama_status = await check_ollama_health()
@@ -49,6 +51,7 @@ async def lifespan(app: FastAPI):
         elif not ollama_status.get("embedding_model_ok"):
             logger.warning(f"Ollama 缺少 Embedding 模型，请执行: ollama pull {settings.EMBEDDING_MODEL}")
     yield
+    await realtime_poll.shutdown()
     logger.info("Shutting down")
 
 
@@ -98,6 +101,7 @@ app.include_router(offline.router, prefix=prefix)
 app.include_router(exploration.router, prefix=prefix)
 app.include_router(insights.router, prefix=prefix)
 app.include_router(data_services.router, prefix=prefix)
+app.include_router(realtime.router, prefix=prefix)
 
 
 @app.get("/health")

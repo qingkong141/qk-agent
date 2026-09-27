@@ -17,6 +17,7 @@ class Settings(BaseSettings):
     CORS_ORIGINS: str = "*"
     PLATFORM_SSO_BASE_URL: str = ""
     PLATFORM_SYSTEM_CODE: str = "AIOT"
+    PLATFORM_DEVICE_BASE_URL: str = ""
 
     DATABASE_URL: str = "sqlite+aiosqlite:///./data/agent.db"
 

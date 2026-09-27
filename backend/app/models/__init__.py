@@ -1,4 +1,5 @@
 from app.models.studio import StudioArtifact
+from app.models.realtime import RealtimeTask
 from app.models.dataset import Dataset, DatasetFile, DatasetFolder
 from app.models.data_model import DataModel, ThemeDomain
 from app.models.offline_query import OfflineQuery
@@ -13,6 +14,7 @@ from app.models.runtime import RunCheckpoint, ToolApproval, UserContext
 
 __all__ = [
     "StudioArtifact",
+    "RealtimeTask",
     "Dataset", "DatasetFile", "DatasetFolder",
     "DataModel", "ThemeDomain",
     "OfflineQuery",
