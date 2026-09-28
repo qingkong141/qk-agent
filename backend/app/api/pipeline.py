@@ -61,6 +61,14 @@ class Source(BaseModel):
     deviceIds: list[str] = Field(max_length=100)
     mode: Literal['raw','metrics']
 
+    @model_validator(mode='before')
+    @classmethod
+    def active_extraction(cls, value):
+        # JSON/Influx inputs do not use the editor's datasource extraction defaults.
+        if isinstance(value, dict) and value.get('kind') in ('json', 'influx'):
+            return {**value, 'extraction': None}
+        return value
+
     @model_validator(mode='after')
     def dates(self):
         if self.kind=='datasource' and (not self.datasource_id or self.extraction is None):

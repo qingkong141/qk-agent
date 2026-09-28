@@ -35,6 +35,32 @@ async def main():
             assert (await client.post('/studio/artifacts',json={**body,'config':bad})).status_code==422
         assert (await client.put(url,json={**body,'expected_revision':1})).status_code==200
         assert (await client.put(url,json={**body,'expected_revision':1})).status_code==409
+        # The editor restores empty extraction defaults even for JSON/Influx input.
+        extraction={'resource':'','limit':100,'product_field':'productKey','products':[],'lookback_minutes':60}
+        for kind in ('json','influx'):
+            restored=copy.deepcopy(config)
+            restored['sourceSettings'].update(kind=kind,datasource_id='',extraction=extraction)
+            payload={**body,'config':restored}
+            response=await client.post('/studio/artifacts',json=payload)
+            assert response.status_code==201,response.text
+            saved=response.json();saved_url='/studio/artifacts/'+saved['id']
+            assert saved['config']['sourceSettings']['extraction'] is None
+            # Opening a saved record reinstates the UI defaults before saving again.
+            restored=copy.deepcopy(saved['config'])
+            restored['sourceSettings']['extraction']=extraction
+            response=await client.put(saved_url,json={**body,'config':restored,'expected_revision':1})
+            assert response.status_code==200,response.text
+            assert response.json()['config']['input']==config['input']
+            assert response.json()['config']['sourceSettings']['extraction'] is None
+            assert (await client.request('DELETE',saved_url,json={'expected_revision':2})).status_code==200
+        datasource=copy.deepcopy(config)
+        datasource['sourceSettings'].update(kind='datasource',datasource_id='source-id',extraction=extraction)
+        for invalid in (extraction,None):
+            datasource['sourceSettings']['extraction']=invalid
+            assert (await client.post('/studio/artifacts',json={**body,'config':datasource})).status_code==422
+        datasource['sourceSettings']['extraction']={**extraction,'resource':'device_assets'}
+        validated=studio.ArtifactInput.model_validate({**body,'config':datasource})
+        assert validated.config['sourceSettings']['extraction']['resource']=='device_assets'
         principal['id']='other'
         assert not (await client.get('/studio/artifacts')).json()
         assert (await client.request('DELETE',url,json={'expected_revision':2})).status_code==404
@@ -48,6 +74,6 @@ async def main():
         legacy['nodes']=[{k:v for k,v in n.items() if k in ('id','kind','x','y','field','value','interval')} for n in config['nodes']]
         assert (await client.post('/studio/artifacts',json={**body,'config':legacy})).status_code==201
     await engine.dispose()
-    print('PASS: v2 fields/source persistence, invalid graphs/input/dates, optimistic revisions, owner/end-user isolation, deletion and legacy compatibility')
+    print('PASS: v2 fields/source persistence, inactive extraction save/reopen, strict datasource validation, invalid graphs/input/dates, optimistic revisions, owner/end-user isolation, deletion and legacy compatibility')
 
 asyncio.run(main())
