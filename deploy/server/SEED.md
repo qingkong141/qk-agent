@@ -22,4 +22,6 @@ docker exec -it aiot-agent python /tmp/seed_case.py --account admin
 
 重复执行会按进度和同名条目复用数据，不清空记录。进度在 `/opt/agent/runtime/seed-progress/`；运行中断后保留此目录重试。请勿同时手工删除或更改正在导入的案例。模型账号配置每次同步；已有业务配置不会被脚本强行覆盖。
 
+导入请求遇到“平台登录校验服务暂不可用”的503会等待2秒、4秒后重试，最多请求3次；持续失败仍停止并保留进度。其他服务端错误、写入请求超时不自动重放，避免重复写入。更新此重试功能只需替换容器中的 `seed_case.py`，无需重建镜像或重新上传案例数据包。
+
 后续维护者重新制作案例包：在本地仓库执行 `backend/venv/Scripts/python.exe scripts/package_server_case.py`。导出只读SQLite一致性快照中的指定案例与文件，不输出数据库、连接凭据或本地账号。

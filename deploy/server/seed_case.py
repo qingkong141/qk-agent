@@ -57,11 +57,13 @@ class API:
         self.owner, self.token = owner, token
 
     def call(self, method, path, **kwargs):
+        renewed = False
         for attempt in range(3):
             response = self.client.request(method, self.base + path,
                 headers={'X-Platform-Token': self.token}, **kwargs)
-            if response.status_code == 401 and attempt == 0:
+            if response.status_code == 401 and not renewed and attempt < 2:
                 self.login()
+                renewed = True
                 continue
             if response.status_code == 429 and attempt < 2:
                 print('请求较多，等待服务限流恢复…', flush=True)
@@ -77,6 +79,14 @@ class API:
                     if not isinstance(detail, str): detail = '请求未通过'
                 except ValueError:
                     detail = '服务返回非JSON内容'
+                # This exact 503 comes from authentication, before the write runs.
+                # Do not replay other server errors or ambiguous network failures.
+                if (response.status_code == 503 and attempt < 2
+                        and detail == '平台登录校验服务暂不可用，请稍后重试'):
+                    delay = 2 * (attempt + 1)
+                    print(f'平台登录校验暂不可用，{delay} 秒后重试（{attempt + 2}/3）…', flush=True)
+                    time.sleep(delay)
+                    continue
                 raise RuntimeError(f'{method} {path}: HTTP {response.status_code} {detail[:300]}')
             return response.json()
         raise RuntimeError('请求重试次数已用完')
