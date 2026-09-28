@@ -34,7 +34,7 @@ class Settings(BaseSettings):
     # 🆕 Multi-Agent 模型分层：每个 Agent 可选独立模型，为空则用 LLM_MODEL
     EDUCATION_AGENT_MODEL: str = ""   # 宣教推荐（低风险，可配轻量模型）
     INFUSION_AGENT_MODEL: str = ""    # 输液调整（高风险，建议配强模型）
-    EMBEDDING_PROVIDER: str = ""  # 留空自动推断；ollama | openai | dashscope
+    EMBEDDING_PROVIDER: str = ""  # 留空自动推断；disabled | ollama | openai | dashscope
     EMBEDDING_MODEL: str = "nomic-embed-text"
     OLLAMA_BASE_URL: str = "http://localhost:11434"
 

@@ -21,6 +21,9 @@ def _resolve_provider() -> str:
 def create_embeddings() -> Embeddings:
     provider = _resolve_provider()
 
+    if provider == "disabled":
+        raise ValueError("未启用文档向量检索。请配置可用的 Embedding 服务后再使用此功能。")
+
     if provider == "ollama":
         from langchain_ollama import OllamaEmbeddings
         return OllamaEmbeddings(

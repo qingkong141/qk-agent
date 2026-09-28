@@ -1,32 +1,28 @@
-# Merge with the existing platform Compose file; do not run this as a replacement.
-# Agent files live under /opt/agent, independently of the platform Compose directory.
+# Agent only. Read deployment variables with --env-file /opt/general.env.
 version: "3"
 services:
-  ui:
-    image: ${AIOT_UI_IMAGE:-orgaiot-platform-ui:249-20260928}
-    restart: unless-stopped
-    environment:
-      ORGAIOT_SSO_ADDR: ${ORGAIOT_SSO_ADDR:?Missing SSO address}
-      ORGAIOT_SSO_API_PREFIX: ${ORGAIOT_SSO_API_PREFIX:-/api}
-      ORGAIOT_SYS_ADDR: ${ORGAIOT_SYS_ADDR:?Missing system address}
-      ORGAIOT_LOG_ADDR: ${ORGAIOT_LOG_ADDR:?Missing log address}
-      ORGAIOT_DEVICE_ADDR: ${ORGAIOT_DEVICE_ADDR:?Missing device address}
-      ORGAIOT_PM_ADDR: ${ORGAIOT_PM_ADDR:?Missing PM address}
-      ORGAIOT_PE_ADDR: ${ORGAIOT_PE_ADDR:?Missing PE address}
-      ORGAIOT_AGENT_ADDR: agent:8000
-    depends_on:
-      - agent
-
   agent:
-    image: orgaiot-agent:20260928
+    image: orgaiot-agent:20260928-online
     container_name: aiot-agent
     restart: unless-stopped
     init: true
     ports:
       - "18731:8000"
-    env_file:
-      - /opt/agent/agent.env
     environment:
+      SECRET_KEY: ${AGENT_SECRET_KEY:?Missing Agent secret key}
+      LLM_PROVIDER: openai
+      OPENAI_API_KEY: ${AGENT_OPENAI_API_KEY:?Missing cloud model API key}
+      OPENAI_API_BASE: ${AGENT_OPENAI_API_BASE:?Missing cloud model API base}
+      LLM_MODEL: ${AGENT_LLM_MODEL:?Missing cloud model name}
+      EMBEDDING_PROVIDER: disabled
+      EMBEDDING_MODEL: ""
+      MAX_AGENT_ITERATIONS: ${AGENT_MAX_AGENT_ITERATIONS:-10}
+      MAX_EXECUTION_TIME: ${AGENT_MAX_EXECUTION_TIME:-120}
+      MAX_TOKENS: ${AGENT_MAX_TOKENS:-4096}
+      MAX_TOKENS_PER_CONVERSATION: ${AGENT_MAX_TOKENS_PER_CONVERSATION:-100000}
+      TEMPERATURE: ${AGENT_TEMPERATURE:-0.7}
+      PLATFORM_SYSTEM_CODE: ${AGENT_PLATFORM_SYSTEM_CODE:-AIOT}
+      PLATFORM_MAP_SYS_TYPE: ${AGENT_PLATFORM_MAP_SYS_TYPE:-}
       DEBUG: "false"
       LOCAL_STUDIO_NO_LOGIN: "false"
       DATABASE_URL: sqlite+aiosqlite:///./data/agent.db
