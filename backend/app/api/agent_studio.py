@@ -15,7 +15,7 @@ from sqlalchemy import delete, select, update
 
 from app.api.datasets import NameInput, identity, scope
 from app.api import agent_models
-from app.api.studio import RevisionInput
+from app.api.studio import RevisionInput, PublicationInput
 from app.config import settings
 from app.dependencies import CurrentUser, DbSession
 from app.llm.factory import create_chat_model
@@ -127,11 +127,13 @@ async def edit(item_id:str,data:Input,db:DbSession,user:CurrentUser):
 
 
 @router.post('/{item_id}/publish')
-async def publish(item_id:str,data:RevisionInput,db:DbSession,user:CurrentUser,request:Request):
+async def publish(item_id:str,data:PublicationInput,db:DbSession,user:CurrentUser,request:Request):
     item=await owned(item_id,db,user);config=Config.model_validate(item.config);await valid_model(config.model,db,user)
     for service_id in config.services: await test_service(service_id,request,db,user)
     result=await db.execute(update(StudioArtifact).where(StudioArtifact.id==item_id,StudioArtifact.revision==data.expected_revision,*scope(StudioArtifact,user)).values(published_revision=data.expected_revision,published_config=item.config))
     if result.rowcount!=1: raise HTTPException(409,'智能体已更新，请重新打开')
+    from app.services.publication_access import configure
+    await configure(db,item_id,data.require_login,request.headers,user)
     await db.commit();await db.refresh(item);return info(item)
 
 
@@ -140,6 +142,8 @@ async def stop(item_id:str,data:RevisionInput,db:DbSession,user:CurrentUser):
     await owned(item_id,db,user)
     result=await db.execute(update(StudioArtifact).where(StudioArtifact.id==item_id,StudioArtifact.revision==data.expected_revision,*scope(StudioArtifact,user)).values(published_revision=None,published_config=None))
     if result.rowcount!=1: raise HTTPException(409,'智能体已更新，请重新打开')
+    from app.services.publication_access import revoke
+    await revoke(db,item_id)
     await db.commit();return info(await owned(item_id,db,user))
 
 

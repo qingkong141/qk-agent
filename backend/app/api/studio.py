@@ -8,6 +8,7 @@ from sqlalchemy import delete, select, update
 
 from app.dependencies import CurrentUser, DbSession
 from app.models.studio import StudioArtifact
+from app.services.publication_access import configure as configure_publication, revoke as revoke_publication
 from app.api.semantic import SemanticConfig, ThingModel
 from app.api.syntax import SyntaxConfig
 from app.api.pipeline import PipelineConfig as PipelineV2Config
@@ -112,6 +113,10 @@ class RevisionInput(BaseModel):
     expected_revision: int = Field(ge=1)
 
 
+class PublicationInput(RevisionInput):
+    require_login: bool = True
+
+
 def scope(user: dict):
     # Match the existing API-key end-user isolation, never trust browser-supplied owner IDs.
     if user.get("auth_type") == "api_key" and not user.get("external_user_id"):
@@ -212,7 +217,7 @@ async def delete_artifact(artifact_id: str, data: RevisionInput, db: DbSession, 
 
 
 @router.post("/artifacts/{artifact_id}/publish")
-async def publish_artifact(artifact_id: str, data: RevisionInput, db: DbSession, user: CurrentUser, request: Request):
+async def publish_artifact(artifact_id: str, data: PublicationInput, db: DbSession, user: CurrentUser, request: Request):
     item = await get_owned(artifact_id, db, user)
     if item.kind != "application" or not (item.config.get("widgets") or any(page.get('widgets') for page in item.config.get('pages',[]))):
         raise HTTPException(400, "当前只支持发布含组件的应用快照")
@@ -226,6 +231,7 @@ async def publish_artifact(artifact_id: str, data: RevisionInput, db: DbSession,
     if result.rowcount != 1:
         await db.rollback()
         raise HTTPException(409, "配置已变化，请刷新后再发布")
+    await configure_publication(db, artifact_id, data.require_login, request.headers, user)
     await db.commit()
     return {"id": artifact_id, "published_revision": data.expected_revision}
 
@@ -238,6 +244,7 @@ async def unpublish_artifact(artifact_id: str, data: RevisionInput, db: DbSessio
     if result.rowcount != 1:
         await db.rollback()
         raise HTTPException(409, "配置已变化，请刷新后再停用")
+    await revoke_publication(db, artifact_id)
     await db.commit()
     return {"id": artifact_id, "published_revision": None}
 

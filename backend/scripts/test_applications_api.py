@@ -13,6 +13,7 @@ from app.api import applications,studio
 from app.db.session import get_db
 from app.dependencies import get_current_user
 from app.models.studio import StudioArtifact
+from app.models.publication import PublicationAccess
 from app.models.realtime import RealtimeTask
 from app.services.application_schema import Binding,Widget,ApplicationConfig
 from app.services import realtime_poll
@@ -21,6 +22,7 @@ async def main():
     engine=create_async_engine('sqlite+aiosqlite:///:memory:')
     async with engine.begin() as conn:
         await conn.run_sync(StudioArtifact.__table__.create);await conn.run_sync(RealtimeTask.__table__.create)
+        await conn.run_sync(PublicationAccess.__table__.create)
     sessions=async_sessionmaker(engine,expire_on_commit=False)
     principal={'id':'owner','auth_type':'jwt','external_user_id':''}
     async def database():
