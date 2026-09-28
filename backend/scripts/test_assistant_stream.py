@@ -91,7 +91,9 @@ async def main():
             assert not list(await session.scalars(select(StudioArtifact)))
     finally:logger.removeHandler(handler)
     plan={'action':'create_product','explanation':'准备创建输液监测产品，请核对字段后确认。','product':{'name':'流式输液监测','fields':[{'key':'battery','name':'电量','type':'number','unit':'%','required':True,'minimum':0,'maximum':100}]}}
+    contexts=[]
     async def proposal(messages):
+        contexts.append(json.loads(messages[1].content))
         raw=json.dumps(plan,ensure_ascii=False)
         for start in range(0,len(raw),4):yield AIMessageChunk(content=raw[start:start+4])
     base='/studio/device-assistant'
@@ -113,6 +115,21 @@ async def main():
             events=[json.loads(line) for line in response.text.splitlines() if line]
             assert events[-1]['type']=='error' and not any(e['type']=='done' for e in events)
             assert (await client.get(base+'/threads/'+thread['id'])).json()['revision']==2
+            plan.update(action='answer',explanation='继续说明产品配置步骤。')
+            interrupted=[{'question':'如何配置电量物模型？','answer':'首先选择数值类型'}, {'question':'继续','answer':''}]
+            response=await client.post(base+'/ask-stream',json={'question':'接着说','interrupted':interrupted})
+            events=[json.loads(line) for line in response.text.splitlines() if line]
+            assert events[-1]['type']=='done',events
+            resumed=events[-1]['data']
+            assert contexts[-1]['history']==[{**v,'interrupted':True,'executed':False} for v in interrupted]
+            assert resumed['turns'][0]['interrupted']==interrupted
+            assert len((await client.get(base+'/catalog')).json()['products'])==1, 'Continuation must not execute writes'
+            response=await client.post(base+'/ask-stream',json={'question':'第二步呢','thread_id':resumed['id'],'expected_revision':1})
+            assert 'done' in response.text
+            assert contexts[-1]['history'][0]['question']=='如何配置电量物模型？'
+            for invalid in [[{'question':'q','answer':'x'*4001}], [{'question':'q'}]*7]:
+                response=await client.post(base+'/ask-stream',json={'question':'继续','interrupted':invalid})
+                assert response.status_code==422
     await engine.dispose()
     print('PASS: incremental Unicode/escaped JSON, no raw SQL leakage, provider cancellation and rollback, streamed device proposals/history, explicit write confirmation, malformed plan rejection')
 

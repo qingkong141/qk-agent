@@ -155,6 +155,16 @@ async def main():
                 events=await stream_ask(q,thread_id=streamed['id'],expected_revision=1)
                 assert events[-1]['type']=='error' and not any(e['type']=='done' for e in events)
             assert (await call('GET','/studio/insights/threads/'+streamed['id']))['revision']==1
+            interrupted=[{'question':'按科室比较电量','answer':'关联设备档案，计算平均值'}]
+            events=await stream_ask('继续',interrupted=interrupted)
+            assert events[-1]['type']=='done',events
+            resumed=events[-1]['data']['thread']
+            assert contexts[-1]['history']==[{'question':interrupted[0]['question'],'explanation':interrupted[0]['answer'],'interrupted':True}]
+            assert resumed['turns'][0]['interrupted']==interrupted
+            events=await stream_ask('继续补充',thread_id=resumed['id'],expected_revision=1)
+            assert events[-1]['type']=='done'
+            assert contexts[-1]['history'][0]['question']=='按科室比较电量'
+            await ask('继续',422,interrupted=[{'question':'q','answer':'x'*4001}])
             print('PASS: streamed explanation, actual SQL result/chart, retained history and error events without saving invalid plans')
             await call("DELETE",path)
             await call("GET",path,404)

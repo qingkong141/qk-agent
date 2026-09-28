@@ -12,6 +12,7 @@ from app.api.semantic import ThingModel
 from app.llm.factory import create_chat_model
 from app.services.realtime_engine import timestamp
 from app.services.assistant_stream import model_response
+from app.services.assistant_context import CONTINUATION_INSTRUCTIONS
 
 KNOWLEDGE = [
     {'id': 'mapping', 'title': '设备接入与转换', 'text': '语义转换器按数据与字段、配置转换、测试结果三步操作。选择报文后展开字段，配置源物模型和目标物模型，连线或编写JSONata；AI辅助生成脚本。源和目标物模型可以保存复用。没有来源的标准字段保留null；数值按明确的单位倍率换算。校验失败不能保存。语法转换器使用JSONata将原始报文解析为对象，再绑定已保存的语义规则版本。协议调试选择两类转换器，配置协议参数和产品设备报文，查看分阶段校验结果。'},
@@ -68,7 +69,7 @@ explanation使用普通中文文本，可分段或使用数字序号；不要使
 不要输出Markdown代码块。'''
     try:
         result = await asyncio.wait_for(model_response(chat if chat is not None else create_chat_model(streaming=emit is not None), [
-            SystemMessage(content=instructions), HumanMessage(content=json.dumps({
+            SystemMessage(content=instructions + CONTINUATION_INSTRUCTIONS), HumanMessage(content=json.dumps({
                 'schema': Plan.model_json_schema(), 'knowledge': KNOWLEDGE, 'catalog': catalog,
                 'history': history[-6:], 'context': context, 'question': question,
             }, ensure_ascii=False)),

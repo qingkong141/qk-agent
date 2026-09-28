@@ -17,6 +17,7 @@ from app.models.studio import StudioArtifact
 from app.services import device_assistant as service
 from app.services.realtime_engine import timestamp
 from app.services.assistant_stream import answer_stream
+from app.services.assistant_context import InterruptedTurn
 
 router = APIRouter(prefix='/studio/device-assistant', tags=['device-assistant'])
 
@@ -73,6 +74,7 @@ class Ask(BaseModel):
     expected_revision: int | None = None
     context: Context = Field(default_factory=Context)
     model: str | None = Field(default=None, min_length=1, max_length=150)
+    interrupted: list[InterruptedTurn] = Field(default_factory=list, max_length=6)
 
 
 async def field_for(device_id, metric, db, user):
@@ -111,7 +113,11 @@ async def answer(data, db, user, request, emit=None):
     turns = item.config['turns'] if item else []
     if len(turns) >= 12: raise HTTPException(400, '本次对话已达12轮，请新建对话')
     directory = await catalog(db, user)
-    history = [{'question': t['question'], 'answer': t['plan']['explanation'], 'executed': bool(t.get('execution'))} for t in turns]
+    history = []
+    for t in turns:
+        history.extend({**v, 'interrupted': True, 'executed': False} for v in t.get('interrupted', []))
+        history.append({'question': t['question'], 'answer': t['plan']['explanation'], 'executed': bool(t.get('execution'))})
+    history.extend({**v.model_dump(), 'interrupted': True, 'executed': False} for v in data.interrupted)
     if len(json.dumps(directory, ensure_ascii=False)) > 60000: raise HTTPException(400, '产品目录内容过多，请缩小当前账号管理范围')
     if emit: await emit({'type': 'progress', 'message': '正在理解问题，生成处理方案…'})
     args = (data.question.strip(), directory, history, data.context.model_dump())
@@ -141,6 +147,7 @@ async def answer(data, db, user, request, emit=None):
     if emit: await emit({'type': 'progress', 'message': '正在整理结果并保存对话…'})
     turn = {'id': str(uuid.uuid4()), 'question': data.question.strip(), 'plan': plan.model_dump(), 'result': result,
             'model': data.model or settings.LLM_MODEL, 'context': data.context.model_dump(), 'time': datetime.now(timezone.utc).isoformat(), 'execution': None}
+    if data.interrupted: turn['interrupted'] = [v.model_dump() for v in data.interrupted]
     config = {'turns': [*turns, turn], 'model': data.model}
     if item:
         changed = await db.execute(update(StudioArtifact).where(StudioArtifact.id == item.id, StudioArtifact.revision == data.expected_revision, *scope(StudioArtifact, user)).values(config=config, revision=StudioArtifact.revision+1))

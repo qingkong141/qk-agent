@@ -19,6 +19,7 @@ from app.llm.factory import create_chat_model
 from app.models.data_model import DataModel, ThemeDomain
 from app.models.studio import StudioArtifact
 from app.services.assistant_stream import answer_stream, model_response
+from app.services.assistant_context import CONTINUATION_INSTRUCTIONS, InterruptedTurn
 
 router = APIRouter(prefix="/studio/insights", tags=["insights"])
 ZONE = timezone(timedelta(hours=8))
@@ -30,6 +31,7 @@ class AskInput(BaseModel):
     question: str = Field(min_length=1, max_length=2000)
     thread_id: str | None = None
     expected_revision: int | None = Field(default=None, ge=1)
+    interrupted: list[InterruptedTurn] = Field(default_factory=list, max_length=6)
 
     @field_validator("question")
     @classmethod
@@ -81,11 +83,15 @@ explanation使用普通中文文本，可分段或使用数字序号；不要使
 
 
 async def generate(question, catalog, history, emit=None, *, chat=None):
-    context = [{"question": turn["question"], "explanation": turn["plan"]["explanation"], "tables": turn["plan"]["tables"]} for turn in history[-6:]]
+    context = []
+    for turn in history:
+        context.extend({'question': v['question'], 'explanation': v['answer'], 'interrupted': True} for v in turn.get('interrupted', []))
+        if 'plan' in turn:
+            context.append({"question": turn["question"], "explanation": turn["plan"]["explanation"], "tables": turn["plan"]["tables"]})
     try:
         result = await asyncio.wait_for(model_response(chat if chat is not None else create_chat_model(streaming=emit is not None), [
-            SystemMessage(content=INSTRUCTIONS),
-            HumanMessage(content=json.dumps({"now": datetime.now(ZONE).isoformat(), "catalog": catalog, "history": context, "question": question}, ensure_ascii=False)),
+            SystemMessage(content=INSTRUCTIONS + CONTINUATION_INSTRUCTIONS),
+            HumanMessage(content=json.dumps({"now": datetime.now(ZONE).isoformat(), "catalog": catalog, "history": context[-6:], "question": question}, ensure_ascii=False)),
         ], emit, structured=True, limit=16000), timeout=60)
     except asyncio.TimeoutError as error:
         raise HTTPException(504, "AI查询生成超时，请稍后重试") from error
@@ -167,7 +173,8 @@ async def answer(data, db, user, emit=None):
     if data.model:
         from app.api.agent_studio import selected_chat_model
         options['chat'] = await selected_chat_model(data.model, db, user, streaming=emit is not None)
-    plan = await generate(data.question, catalog, turns, emit, **options) if emit else await generate(data.question, catalog, turns, **options)
+    history = [*turns, {'interrupted': [v.model_dump() for v in data.interrupted]}] if data.interrupted else turns
+    plan = await generate(data.question, catalog, history, emit, **options) if emit else await generate(data.question, catalog, history, **options)
     result, model_ids = None, []
     if plan.action == "query":
         if emit: await emit({'type': 'progress', 'message': '正在校验查询并读取数据…'})
@@ -185,6 +192,7 @@ async def answer(data, db, user, emit=None):
         plan.chart = Chart.model_validate(chart_for(plan, result))
     if emit: await emit({'type': 'progress', 'message': '正在整理结果并保存对话…'})
     turn = {"id": str(uuid.uuid4()), "question": data.question, "plan": plan.model_dump(), "model_ids": model_ids, "model": data.model or settings.LLM_MODEL, "created_at": datetime.now(ZONE).isoformat()}
+    if data.interrupted: turn['interrupted'] = [v.model_dump() for v in data.interrupted]
     config = {"domain_id": data.domain_id, "turns": [*turns, turn], "model": data.model}
     if item:
         changed = await db.execute(update(StudioArtifact).where(StudioArtifact.id == item.id, StudioArtifact.revision == data.expected_revision, *scope(StudioArtifact, user)).values(config=config, revision=StudioArtifact.revision + 1))

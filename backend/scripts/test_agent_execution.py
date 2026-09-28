@@ -67,6 +67,12 @@ async def main():
         assert set(len(r['trace']) for r in seen)==set(range(8))
         assert [r['answer'] for r in seen if r['answer']]==['完','完成']
         assert any('lookup' in r.get('message','') for r in seen)
+        # A new run must receive the original request and stopped partial text, not only "continue".
+        resumed=Model(total=0)
+        await execute(resumed,history=[api.HistoryTurn(question='分析INF-031近一小时电量',answer='本轮未完成：已停止回答\n已查到电量，接下来分析趋势')])
+        assert '中途停止的片段' in resumed.seen[0][0].content
+        assert resumed.seen[0][1].content=='分析INF-031近一小时电量'
+        assert '接下来分析趋势' in resumed.seen[0][2].content
         # A final answer after exactly the allowed calls is still permitted.
         result=await execute(Model(total=2),config(max_tool_calls=2));assert result['status']=='completed'
         result=await execute(Model(total=4,batch=True),config(max_tool_calls=2))
