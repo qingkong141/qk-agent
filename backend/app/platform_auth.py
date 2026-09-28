@@ -10,6 +10,7 @@ import bcrypt
 import httpx
 from fastapi import HTTPException
 from jose import JWTError, jwt
+from loguru import logger
 from sqlalchemy.exc import IntegrityError
 
 from app.config import settings
@@ -36,13 +37,20 @@ async def validate_platform_identity(token: str) -> str:
     base = settings.PLATFORM_SSO_BASE_URL.rstrip('/')
     if not base:
         raise HTTPException(503, '尚未配置平台SSO地址，请联系管理员')
+    started = time.monotonic()
     try:
         async with httpx.AsyncClient(timeout=10, trust_env=False, follow_redirects=False) as client:
             response = await client.post(base + '/SSO/ValidateToken', params={'token': token},
                                          headers={'UISystemCode': settings.PLATFORM_SYSTEM_CODE})
         response.raise_for_status()
         result = response.json()
-    except (httpx.HTTPError, ValueError):
+    except (httpx.HTTPError, ValueError) as error:
+        # Exception URLs and response bodies can contain the session token.
+        # Record only the failure class, upstream status and elapsed time.
+        status = error.response.status_code if isinstance(error, httpx.HTTPStatusError) else None
+        reason = type(error).__name__ if isinstance(error, httpx.HTTPError) else 'InvalidJSON'
+        logger.warning('SSO validation unavailable: reason={} upstream_status={} elapsed_ms={}',
+                       reason, status, round((time.monotonic() - started) * 1000))
         raise HTTPException(503, '平台登录校验服务暂不可用，请稍后重试') from None
     if not isinstance(result, dict) or type(result.get('Status')) is not int or result['Status'] != 1:
         raise HTTPException(401, '平台登录已失效，请重新登录当前后台')

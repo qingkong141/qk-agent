@@ -204,7 +204,18 @@ async def main():
 
             for mode, expected in [('timeout', 503), ('connection', 503), ('redirect', 503), ('server-error', 503), ('bad-json', 503), ('bool-status', 401), ('string-status', 401), ('missing-status', 401), ('array-body', 401), ('reject', 401)]:
                 remote_mode = mode
-                response = await client.get('/whoami', headers={'X-Platform-Token': platform_token('new-user')})
+                probe_token = platform_token('new-user')
+                with patch.object(platform_auth.logger, 'warning') as warning:
+                    response = await client.get('/whoami', headers={'X-Platform-Token': probe_token})
+                    if expected == 503:
+                        warning.assert_called_once()
+                        assert probe_token not in str(warning.call_args)
+                        reasons = {'timeout': ('ReadTimeout', None), 'connection': ('ConnectError', None),
+                                   'redirect': ('HTTPStatusError', 302), 'server-error': ('HTTPStatusError', 500),
+                                   'bad-json': ('InvalidJSON', None)}
+                        assert warning.call_args.args[1:3] == reasons[mode]
+                    else:
+                        warning.assert_not_called()
                 assert response.status_code == expected, (mode, response.status_code)
                 assert valid not in response.text
             checks += 10
