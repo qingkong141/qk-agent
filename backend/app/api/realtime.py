@@ -163,7 +163,7 @@ async def start(item_id: str, data: RevisionInput, db: DbSession, user: CurrentU
     validate_source(item, request.headers.get('X-Platform-Token'))
     item.status = 'running'; item.runtime = {**item.runtime, 'error': '', 'started_at': datetime.now(timezone.utc).isoformat()}
     await db.commit(); await db.refresh(item)
-    launch(item, request.headers.get('X-Platform-Token'), user)
+    launch(item, request.headers.get('X-Platform-Token'), user, request.headers.get('X-Platform-Refresh-Token'))
     return info(item)
 
 
