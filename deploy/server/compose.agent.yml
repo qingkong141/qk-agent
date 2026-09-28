@@ -1,0 +1,47 @@
+# Merge with the existing platform Compose file; do not run this as a replacement.
+# Relative paths below are relative to the FIRST Compose file's directory.
+services:
+  ui:
+    image: ${AIOT_UI_IMAGE:-orgaiot-platform-ui:249-20260928}
+    restart: unless-stopped
+    environment:
+      ORGAIOT_SSO_ADDR: ${ORGAIOT_SSO_ADDR:?Missing SSO address}
+      ORGAIOT_SSO_API_PREFIX: ${ORGAIOT_SSO_API_PREFIX:-/api}
+      ORGAIOT_SYS_ADDR: ${ORGAIOT_SYS_ADDR:?Missing system address}
+      ORGAIOT_LOG_ADDR: ${ORGAIOT_LOG_ADDR:?Missing log address}
+      ORGAIOT_DEVICE_ADDR: ${ORGAIOT_DEVICE_ADDR:?Missing device address}
+      ORGAIOT_PM_ADDR: ${ORGAIOT_PM_ADDR:?Missing PM address}
+      ORGAIOT_PE_ADDR: ${ORGAIOT_PE_ADDR:?Missing PE address}
+      ORGAIOT_AGENT_ADDR: agent:8000
+    depends_on:
+      agent:
+        condition: service_healthy
+
+  agent:
+    image: orgaiot-agent:20260928
+    container_name: aiot-agent
+    restart: unless-stopped
+    init: true
+    ports:
+      - "18731:8000"
+    env_file:
+      - path: ./agent/agent.env
+        format: raw
+    environment:
+      DEBUG: "false"
+      LOCAL_STUDIO_NO_LOGIN: "false"
+      DATABASE_URL: sqlite+aiosqlite:///./data/agent.db
+      UPLOAD_DIR: ./data/documents
+      DATASET_DIR: ./data/datasets
+      LOG_DIR: ./data/logs
+      PLATFORM_SSO_BASE_URL: http://${ORGAIOT_SSO_ADDR:?Missing SSO address}${ORGAIOT_SSO_API_PREFIX:-/api}
+      PLATFORM_DEVICE_BASE_URL: http://${ORGAIOT_DEVICE_ADDR:?Missing device address}/api
+      PLATFORM_PM_BASE_URL: http://${ORGAIOT_PM_ADDR:?Missing PM address}/api
+      PLATFORM_PE_BASE_URL: http://${ORGAIOT_PE_ADDR:?Missing PE address}/api
+      TZ: Asia/Shanghai
+    volumes:
+      - ./agent/runtime:/app/data
+    logging:
+      options:
+        max-size: "10m"
+        max-file: "3"
