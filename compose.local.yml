@@ -1,0 +1,49 @@
+name: orgaiot-local
+services:
+  agent:
+    build: ./backend
+    image: orgaiot-agent:local
+    container_name: orgaiot-agent
+    restart: unless-stopped
+    init: true
+    ports:
+      - "18731:8000"
+    env_file:
+      - path: ./data/docker/agent.env
+        format: raw
+    volumes:
+      - ./data/docker/runtime:/app/data
+    environment:
+      TZ: Asia/Shanghai
+    logging:
+      options:
+        max-size: "10m"
+        max-file: "3"
+  frontend:
+    build: ../02.platform.ui/OrgAIoT.Platform.UI.v3
+    image: orgaiot-platform-ui:local
+    container_name: orgaiot-ui
+    restart: unless-stopped
+    ports:
+      - "81:80"
+    depends_on:
+      agent:
+        condition: service_healthy
+    environment:
+      ORGAIOT_AGENT_ADDR: agent:8000
+      ORGAIOT_SSO_ADDR: 192.168.10.254:8087
+      ORGAIOT_SSO_API_PREFIX: /api
+      ORGAIOT_SYS_ADDR: 192.168.10.254:8089
+      ORGAIOT_LOG_ADDR: 192.168.10.254:5000
+      ORGAIOT_DEVICE_ADDR: 192.168.10.254:9090
+      ORGAIOT_PM_ADDR: 192.168.10.254:7034
+      ORGAIOT_PE_ADDR: 192.168.10.254:7039
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1/"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    logging:
+      options:
+        max-size: "10m"
+        max-file: "3"

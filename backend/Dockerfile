@@ -1,5 +1,10 @@
 # ---- 构建依赖 ----
-FROM python:3.12-slim AS builder
+FROM node:22-bookworm-slim AS protocol
+WORKDIR /protocol-runtime
+COPY protocol-runtime/package*.json ./
+RUN npm ci --omit=dev
+
+FROM python:3.12-slim-bookworm AS builder
 
 WORKDIR /build
 RUN pip install --no-cache-dir --upgrade pip
@@ -7,7 +12,7 @@ COPY requirements.txt .
 RUN pip wheel --no-cache-dir --wheel-dir /wheels -r requirements.txt
 
 # ---- 运行镜像 ----
-FROM python:3.12-slim
+FROM python:3.12-slim-bookworm
 
 WORKDIR /app
 
@@ -19,8 +24,15 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY --from=builder /wheels /wheels
 RUN pip install --no-cache-dir /wheels/* && rm -rf /wheels
 
+COPY --from=protocol /usr/local/bin/node /usr/local/bin/node
+COPY --from=protocol /usr/local/lib/node_modules /usr/local/lib/node_modules
+RUN ln -s /usr/local/lib/node_modules/npm/bin/npm-cli.js /usr/local/bin/npm \
+    && ln -s /usr/local/lib/node_modules/npm/bin/npx-cli.js /usr/local/bin/npx
+
 COPY . .
-RUN mkdir -p /app/data/documents /app/data/logs && chown -R app:app /app
+COPY --from=protocol /protocol-runtime/node_modules /app/protocol-runtime/node_modules
+RUN mkdir -p /app/data/documents /app/data/datasets /app/data/logs && chown -R app:app /app
+ENV PYTHONUNBUFFERED=1 PYTHONDONTWRITEBYTECODE=1
 
 USER app
 EXPOSE 8000
