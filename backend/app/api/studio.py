@@ -221,16 +221,18 @@ async def publish_artifact(artifact_id: str, data: PublicationInput, db: DbSessi
     item = await get_owned(artifact_id, db, user)
     if item.kind != "application" or not (item.config.get("widgets") or any(page.get('widgets') for page in item.config.get('pages',[]))):
         raise HTTPException(400, "当前只支持发布含组件的应用快照")
+    if item.published_revision is not None:
+        raise HTTPException(409, "应用已发布，请先停用当前发布版，再发布新配置")
     if item.config.get('schemaVersion') == 2:
         from app.api.applications import read_source, check_widgets, apply_logic
         config = ApplicationV2Config.model_validate(item.config)
         result = apply_logic(config, await read_source(config.source, db, user, request.headers.get('X-Platform-Token')))
         check_widgets(config, result)
     result = await db.execute(update(StudioArtifact).where(StudioArtifact.id == artifact_id, *scope(user),
-        StudioArtifact.revision == data.expected_revision).values(published_revision=data.expected_revision, published_config=item.config))
+        StudioArtifact.revision == data.expected_revision, StudioArtifact.published_revision.is_(None)).values(published_revision=data.expected_revision, published_config=item.config))
     if result.rowcount != 1:
         await db.rollback()
-        raise HTTPException(409, "配置已变化，请刷新后再发布")
+        raise HTTPException(409, "应用已发布或配置已变化，请刷新后再操作")
     await configure_publication(db, artifact_id, data.require_login, request.headers, user)
     await db.commit()
     return {"id": artifact_id, "published_revision": data.expected_revision}

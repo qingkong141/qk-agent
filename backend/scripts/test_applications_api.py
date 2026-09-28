@@ -80,9 +80,12 @@ async def main():
         created=await client.post('/studio/artifacts',json={'kind':'application','name':'设备应用','config':cfg});assert created.status_code==201,created.text
         item=created.json();path='/studio/artifacts/'+item['id']
         assert (await client.post(path+'/publish',json={'expected_revision':1})).status_code==200
+        duplicate=await client.post(path+'/publish',json={'expected_revision':1})
+        assert duplicate.status_code==409 and '先停用' in duplicate.json()['detail']
         assert (await client.request('DELETE',path,json={'expected_revision':1})).status_code==409
         draft={**cfg,'title':'新草稿'}
         assert (await client.put(path,json={'kind':'application','name':'设备应用','config':draft,'expected_revision':1})).status_code==200
+        assert (await client.post(path+'/publish',json={'expected_revision':2})).status_code==409
         published=(await client.get(path+'/published')).json()
         assert published['revision']==1 and published['config']['title']=='设备概览'
         async with sessions() as db:

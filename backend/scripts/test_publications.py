@@ -88,6 +88,9 @@ async def main():
             principal.update(id='owner', external_user_id='different')
             assert (await client.get('/studio/publications/app')).status_code == 404
             principal['external_user_id'] = ''
+            duplicate = await client.post('/studio/artifacts/app/publish', json={'expected_revision': 2, 'require_login': True})
+            assert duplicate.status_code == 409
+            assert (await client.get('/publications/'+token)).json()['revision'] == 1
             stale = await client.put('/studio/publications/app/access', json={'require_login': True, 'expected_revision': 1})
             assert stale.status_code == 409
             changed = await client.put('/studio/publications/app/access', json={'require_login': True, 'expected_revision': 2})
