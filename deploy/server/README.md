@@ -6,7 +6,8 @@
 
 ## 已确认与待确认
 
-- 本机镜像是 Linux/amd64，服务器需匹配架构。使用 Docker Compose v2.30.0 或以上（`env_file.format: raw` 所需）。
+- 本机镜像是 Linux/amd64，服务器需匹配架构。服务器版本为 Docker Engine 20.10.12、docker-compose 1.29.2，配置已用相同版本 Compose 通过解析验证，无需为了部署配置升级 Docker。
+- 使用带连字符的 `docker-compose`。Agent env 使用普通文件列表，不使用 `format: raw`；启动脚本自行等待健康状态，不使用 `--wait`。
 - 本次先部署 249，后续另行部署 254；两台服务器各自使用独立 `/opt/agent/runtime`。代码部署本身不要求迁移账号：使用空数据库可正常登录、创建配置。只有携带现有 254 流程样例到 249 时才需要迁移数据归属。
 - Agent 平台用户 ID 包含 SSO 地址、令牌 issuer、userID。换环境后须校验目标账号并迁移其流程、模型及连接配置归属，否则登录后看不到原记录。不要删除或绕过该身份隔离逻辑。
 - 已保存的数据源地址、设备 ID、地图会话和匿名发布凭据也不会随环境变量自动更新。跨环境应保留原始采集数据的来源说明，并重新绑定目标设备、校验连接、登录后更新发布访问设置。
@@ -19,7 +20,7 @@
 原文件 `ui.build.args` 里的 `ORGAIOT_PM_ADDR`、`ORGAIOT_PE_ADDR` 各出现两次，先删除第二组重复项，否则新版 Compose 会拒绝解析。
 保留其余业务服务配置原样。
 
-全局变量用 `--env-file` 提供给 Compose，`general.hy.env` 覆盖 `general.env` 同名变量。
+docker-compose 1.29.2 只支持一个 `--env-file`。启动脚本将 `/opt/general.env` 和 `/opt/aiot/general.hy.env` 按顺序合并到 `/opt/agent/compose.env`，后者覆盖前者同名变量。原文件不修改，合并文件权限为 600。
 服务中的 `env_file:` 不会自动为 Compose 的 `${...}` 提供替换值。
 不要通过 shell 的 `source` 读取这类包含冒号的 .NET 配置键。
 
@@ -56,6 +57,8 @@ Agent 不需要接收整份全局文件里的其他系统密码，也不使用�
 /opt/aiot/general.hy.env            # 服务器已有，保留
 /opt/aiot/docker-compose.yml        # 服务器已有，只修正重复键
 /opt/agent/compose.agent.yml        # 本目录提供的覆盖文件
+/opt/agent/deploy.sh                # 兼容 Compose 1.29.2 的启动脚本
+/opt/agent/compose.env              # 启动时自动合并生成，勿手工维护
 /opt/agent/server-images.tar        # 导出的两个镜像
 /opt/agent/agent.env                # Agent 专属密钥及运行参数
 /opt/agent/runtime/agent.db         # 首次启动生成，或导入最终迁移库
@@ -74,26 +77,27 @@ Agent 不需要接收整份全局文件里的其他系统密码，也不使用�
 可以先按下面命令启动程序，Agent 会创建空工作台库，249 账号可正常登录和创建配置。
 如需带入原流程样例，须完成前述账号归属及连接校验后再放入最终迁移库；不要用旧库覆盖已开始使用的新库。
 
-在服务器执行（现有平台 Compose 路径如果不同，替换下面的 `/opt/aiot/docker-compose.yml`）：
+已上传旧版文件的服务器，只需重新上传 `compose.agent.yml`、`deploy.sh` 和本说明。`server-images.tar`、`agent.env` 不变，无需重新上传。
+
+在服务器以 root 执行：
 
 ```bash
 cd /opt/agent
-docker load --input /opt/agent/server-images.tar
-chmod 600 /opt/agent/agent.env
-mkdir -p /opt/agent/runtime/logs
-# 当前发布镜像的 app 用户 UID=100，GID=101；挂载目录须允许该用户写入。
-sudo chown -R 100:101 /opt/agent/runtime
+# 兼容 Windows 上传工具保留的换行符
+sed -i 's/\r$//' deploy.sh
+bash deploy.sh /opt/aiot/docker-compose.yml
+```
 
-docker compose --env-file /opt/general.env --env-file /opt/aiot/general.hy.env \
-  -f /opt/aiot/docker-compose.yml -f /opt/agent/compose.agent.yml config --quiet
+最后一个参数是原平台 Compose 文件；如果实际文件名不同，请替换该路径。
+脚本校验文件与合并配置，导入镜像，保留旧前端镜像标签，设置 Agent 数据目录权限，先启动 Agent 并等待健康，再更新前端。
+Agent 未健康时不会执行前端更新。只更新 `agent` 和 `ui`，使用 `--no-build --no-deps`，不会重建其他业务容器。
+原文件 `ui.build.args` 重复键请仍按前面的说明处理。
 
-# --no-build 使用已导入镜像；--no-deps 防止重建其他业务服务。
-docker compose --env-file /opt/general.env --env-file /opt/aiot/general.hy.env \
-  -f /opt/aiot/docker-compose.yml -f /opt/agent/compose.agent.yml up -d --no-build --no-deps --wait agent
+脚本执行后可手工检查：
 
-docker compose --env-file /opt/general.env --env-file /opt/aiot/general.hy.env \
-  -f /opt/aiot/docker-compose.yml -f /opt/agent/compose.agent.yml up -d --no-build --no-deps --wait ui
-
+```bash
+docker-compose --env-file /opt/agent/compose.env \
+  -f /opt/aiot/docker-compose.yml -f /opt/agent/compose.agent.yml ps agent ui
 curl -f http://127.0.0.1:18731/health
 curl -f http://127.0.0.1:81/agent-api/health
 ```
@@ -105,8 +109,14 @@ curl -f http://127.0.0.1:81/agent-api/health
 
 ## 5. 回退
 
-上线前给当前前端镜像加备份标签。需要回退时，将覆盖文件 `ui.image` 改成该备份标签，重复仅更新 `ui` 的命令。
+启动脚本会输出旧前端的备份标签 `aiot-ui:before-agent-时间`。需要回退时，将覆盖文件 `ui.image` 改成该备份标签，执行：
+
+```bash
+docker-compose --env-file /opt/agent/compose.env \
+  -f /opt/aiot/docker-compose.yml -f /opt/agent/compose.agent.yml \
+  up -d --no-build --no-deps ui
+```
 如果旧前端依赖原有 build 参数而未提供运行时 env，回退时也要使用备份的原部署配置。
 不要执行整个平台的 `down`，不要删除 `/opt/agent/runtime`。后续更新只换镜像，数据库继续使用服务器现有目录。
 
-Docker 官方参考：[导出镜像](https://docs.docker.com/reference/cli/docker/image/save/)、[导入镜像](https://docs.docker.com/reference/cli/docker/image/load/)、[Compose 环境文件](https://docs.docker.com/reference/compose-file/services/#env_file)。
+Docker 官方参考：[导出镜像](https://docs.docker.com/reference/cli/docker/image/save/)、[导入镜像](https://docs.docker.com/reference/cli/docker/image/load/)、[Compose 1.29.2 命令定义](https://github.com/docker/compose/blob/1.29.2/compose/cli/main.py)。
