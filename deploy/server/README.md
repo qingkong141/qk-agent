@@ -7,7 +7,7 @@
 ## 已确认与待确认
 
 - 本机镜像是 Linux/amd64，服务器需匹配架构。使用 Docker Compose v2.30.0 或以上（`env_file.format: raw` 所需）。
-- 本次先部署 249，后续另行部署 254；两边各自使用独立 `agent/runtime`。代码部署本身不要求迁移账号：使用空数据库可正常登录、创建配置。只有携带现有 254 流程样例到 249 时才需要迁移数据归属。
+- 本次先部署 249，后续另行部署 254；两台服务器各自使用独立 `/opt/agent/runtime`。代码部署本身不要求迁移账号：使用空数据库可正常登录、创建配置。只有携带现有 254 流程样例到 249 时才需要迁移数据归属。
 - Agent 平台用户 ID 包含 SSO 地址、令牌 issuer、userID。换环境后须校验目标账号并迁移其流程、模型及连接配置归属，否则登录后看不到原记录。不要删除或绕过该身份隔离逻辑。
 - 已保存的数据源地址、设备 ID、地图会话和匿名发布凭据也不会随环境变量自动更新。跨环境应保留原始采集数据的来源说明，并重新绑定目标设备、校验连接、登录后更新发布访问设置。
 - 全局 `ORGAIOT_SSO_ADDR` 指向 `249:8087`，另一个旧变量 `VUE_APP_PMUI_SSO` 指向 `249:7009/am/api`。本覆盖文件统一使用 `ORGAIOT_SSO_ADDR`；直连通常配 `/api`，若现场改走网关则同时改为网关地址和 `/am/api`。以现场有效登录入口为准。
@@ -45,7 +45,7 @@ docker image save --output D:\zhencheng\ai-agent\data\server-images.tar orgaiot-
 一并带上 `datasets/`、`documents/`、`chroma/`；无需迁移 `backups/` 中已删除测试数据的旧备份和历史日志。
 跨 249/254 的账号与数据关联迁移尚未执行；需要在目标环境验证登录账号后再制作最终数据包，不能直接搬过去就认为原流程已可见。
 
-保留 `data/docker/agent.env` 为服务器的 `agent/agent.env`。其中包含加密所需的原 SECRET_KEY 和 Agent 专属参数，限制文件访问，不提交到 Git。
+保留 `data/docker/agent.env` 为服务器的 `/opt/agent/agent.env`。发布目录根部已提供该文件，上传到 `/opt/agent/` 即可。其中包含加密所需的原 SECRET_KEY 和 Agent 专属参数，限制文件访问，不提交到 Git。
 平台 SSO/设备/PM/PE 地址由覆盖文件中的 `environment` 从全局 env 映射，优先于此文件中的旧地址。
 Agent 不需要接收整份全局文件里的其他系统密码，也不使用原业务系统的数据库作为工作台数据库。
 
@@ -55,17 +55,18 @@ Agent 不需要接收整份全局文件里的其他系统密码，也不使用�
 /opt/general.env                   # 服务器已有，保留
 /opt/aiot/general.hy.env            # 服务器已有，保留
 /opt/aiot/docker-compose.yml        # 服务器已有，只修正重复键
-/opt/aiot/compose.agent.yml         # 本目录提供的覆盖文件
-/opt/aiot/server-images.tar         # 导出的两个镜像
-/opt/aiot/agent/agent.env            # Agent 专属密钥及运行参数
-/opt/aiot/agent/runtime/agent.db     # 最终迁移数据库
-/opt/aiot/agent/runtime/datasets/
-/opt/aiot/agent/runtime/documents/
-/opt/aiot/agent/runtime/chroma/
-/opt/aiot/agent/runtime/logs/
+/opt/agent/compose.agent.yml        # 本目录提供的覆盖文件
+/opt/agent/server-images.tar        # 导出的两个镜像
+/opt/agent/agent.env                # Agent 专属密钥及运行参数
+/opt/agent/runtime/agent.db         # 首次启动生成，或导入最终迁移库
+/opt/agent/runtime/datasets/
+/opt/agent/runtime/documents/
+/opt/agent/runtime/chroma/
+/opt/agent/runtime/logs/
 ```
 
-首次安装使用新的 `agent` 目录。已有 Agent 数据时先备份，不能用本机包覆盖服务器运行中的数据库。
+将 `data/server249-release` 目录中的文件上传到 `/opt/agent/`。已有 Agent 数据时先备份，不能用本机包覆盖服务器运行中的数据库。
+后端程序在 Docker 镜像内，不需要额外上传 Python 源代码。`/opt/agent/runtime` 挂载到容器的 `/app/data`。
 
 ## 4. 启动
 
@@ -73,24 +74,25 @@ Agent 不需要接收整份全局文件里的其他系统密码，也不使用�
 可以先按下面命令启动程序，Agent 会创建空工作台库，249 账号可正常登录和创建配置。
 如需带入原流程样例，须完成前述账号归属及连接校验后再放入最终迁移库；不要用旧库覆盖已开始使用的新库。
 
-在服务器 `/opt/aiot` 下执行：
+在服务器执行（现有平台 Compose 路径如果不同，替换下面的 `/opt/aiot/docker-compose.yml`）：
 
 ```bash
-docker load --input server-images.tar
-chmod 600 agent/agent.env
-mkdir -p agent/runtime/logs
+cd /opt/agent
+docker load --input /opt/agent/server-images.tar
+chmod 600 /opt/agent/agent.env
+mkdir -p /opt/agent/runtime/logs
 # 当前发布镜像的 app 用户 UID=100，GID=101；挂载目录须允许该用户写入。
-sudo chown -R 100:101 /opt/aiot/agent/runtime
+sudo chown -R 100:101 /opt/agent/runtime
 
 docker compose --env-file /opt/general.env --env-file /opt/aiot/general.hy.env \
-  -f docker-compose.yml -f compose.agent.yml config --quiet
+  -f /opt/aiot/docker-compose.yml -f /opt/agent/compose.agent.yml config --quiet
 
 # --no-build 使用已导入镜像；--no-deps 防止重建其他业务服务。
 docker compose --env-file /opt/general.env --env-file /opt/aiot/general.hy.env \
-  -f docker-compose.yml -f compose.agent.yml up -d --no-build --no-deps --wait agent
+  -f /opt/aiot/docker-compose.yml -f /opt/agent/compose.agent.yml up -d --no-build --no-deps --wait agent
 
 docker compose --env-file /opt/general.env --env-file /opt/aiot/general.hy.env \
-  -f docker-compose.yml -f compose.agent.yml up -d --no-build --no-deps --wait ui
+  -f /opt/aiot/docker-compose.yml -f /opt/agent/compose.agent.yml up -d --no-build --no-deps --wait ui
 
 curl -f http://127.0.0.1:18731/health
 curl -f http://127.0.0.1:81/agent-api/health
@@ -105,6 +107,6 @@ curl -f http://127.0.0.1:81/agent-api/health
 
 上线前给当前前端镜像加备份标签。需要回退时，将覆盖文件 `ui.image` 改成该备份标签，重复仅更新 `ui` 的命令。
 如果旧前端依赖原有 build 参数而未提供运行时 env，回退时也要使用备份的原部署配置。
-不要执行整个平台的 `down`，不要删除 `agent/runtime`。后续更新只换镜像，数据库继续使用服务器现有目录。
+不要执行整个平台的 `down`，不要删除 `/opt/agent/runtime`。后续更新只换镜像，数据库继续使用服务器现有目录。
 
 Docker 官方参考：[导出镜像](https://docs.docker.com/reference/cli/docker/image/save/)、[导入镜像](https://docs.docker.com/reference/cli/docker/image/load/)、[Compose 环境文件](https://docs.docker.com/reference/compose-file/services/#env_file)。

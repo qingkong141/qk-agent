@@ -1,5 +1,5 @@
 # Merge with the existing platform Compose file; do not run this as a replacement.
-# Relative paths below are relative to the FIRST Compose file's directory.
+# Agent files live under /opt/agent, independently of the platform Compose directory.
 services:
   ui:
     image: ${AIOT_UI_IMAGE:-orgaiot-platform-ui:249-20260928}
@@ -25,7 +25,7 @@ services:
     ports:
       - "18731:8000"
     env_file:
-      - path: ./agent/agent.env
+      - path: /opt/agent/agent.env
         format: raw
     environment:
       DEBUG: "false"
@@ -40,7 +40,7 @@ services:
       PLATFORM_PE_BASE_URL: http://${ORGAIOT_PE_ADDR:?Missing PE address}/api
       TZ: Asia/Shanghai
     volumes:
-      - ./agent/runtime:/app/data
+      - /opt/agent/runtime:/app/data
     logging:
       options:
         max-size: "10m"
