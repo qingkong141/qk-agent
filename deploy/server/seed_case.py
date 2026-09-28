@@ -11,10 +11,12 @@ import os
 from pathlib import Path
 import sys
 import time
+import uuid
 import zipfile
 
 import httpx
 from fastapi import HTTPException
+from jose import jwt
 
 if Path('/app/app').is_dir():
     sys.path.insert(0, '/app')
@@ -56,11 +58,14 @@ class API:
             raise RuntimeError('续期后的账号发生变化，已停止。')
         self.owner, self.token = owner, token
 
+    def auth_headers(self):
+        return {'X-Platform-Token': self.token}
+
     def call(self, method, path, **kwargs):
         renewed = False
         for attempt in range(3):
             response = self.client.request(method, self.base + path,
-                headers={'X-Platform-Token': self.token}, **kwargs)
+                headers=self.auth_headers(), **kwargs)
             if response.status_code == 401 and not renewed and attempt < 2:
                 self.login()
                 renewed = True
@@ -90,6 +95,53 @@ class API:
                 raise RuntimeError(f'{method} {path}: HTTP {response.status_code} {detail[:300]}')
             return response.json()
         raise RuntimeError('请求重试次数已用完')
+
+
+def local_owner(directory, owner_hint=None):
+    """Reuse a previously verified scope; never guess which platform user is admin."""
+    owners = set()
+    if owner_hint: owner_hint = str(uuid.UUID(owner_hint))
+    for path in directory.glob(CASE_ID + '-*.json'):
+        state = json.loads(path.read_text(encoding='utf-8'))
+        if state.get('case_id') != CASE_ID or state.get('sso') != settings.PLATFORM_SSO_BASE_URL:
+            continue
+        owner = str(uuid.UUID(state['owner']))
+        if path.name == f'{CASE_ID}-{owner}.json' and (not owner_hint or owner == owner_hint):
+            owners.add(owner)
+    if not owners:
+        raise RuntimeError('未找到当前环境已验证账号的导入进度。首次请用 --account 登录一次建立数据归属。')
+    if len(owners) != 1:
+        raise RuntimeError('存在多个账号的进度，请用 --owner 指定归属：' + ', '.join(sorted(owners)))
+    return owners.pop()
+
+
+class LocalAPI(API):
+    """Container administrator imports through existing validation with a local JWT."""
+    def __init__(self, base, owner):
+        url = httpx.URL(base)
+        if (url.scheme != 'http' or url.host not in ('127.0.0.1', 'localhost', '::1')
+                or url.username or url.password or url.query or url.fragment):
+            raise RuntimeError('本地导入仅允许访问容器回环地址，例如 http://127.0.0.1:8000/api/v1')
+        super().__init__(base, '', '')
+        self.owner = str(uuid.UUID(owner))
+
+    def login(self):
+        async def verify_owner():
+            from app.db.session import async_session
+            from app.models.user import User
+            async with async_session() as db:
+                user = await db.get(User, self.owner)
+                if not user or not user.is_active:
+                    raise RuntimeError('导入账号不存在或已停用，不能继续本地导入。')
+        asyncio.run(verify_owner())
+        if not settings.SECRET_KEY or settings.SECRET_KEY == 'change-me-in-production':
+            raise RuntimeError('请先设置有效的 Agent SECRET_KEY。')
+        # Short-lived, memory-only credential; public APIs keep their normal auth.
+        self.token = jwt.encode({'sub': self.owner, 'exp': int(time.time()) + 900},
+                                settings.SECRET_KEY, algorithm='HS256')
+
+    def auth_headers(self):
+        return {'Authorization': 'Bearer ' + self.token}
 
 
 class Importer:
@@ -414,15 +466,23 @@ def main():
     parser.add_argument('--bundle', type=Path, default=Path(__file__).with_name('hospital-case.zip'))
     parser.add_argument('--account', default='admin')
     parser.add_argument('--api-base', default='http://127.0.0.1:8000/api/v1')
+    parser.add_argument('--local', action='store_true', help='在容器内复用已验证账号归属，不调用平台登录服务')
+    parser.add_argument('--owner', help='本地模式有多个导入进度时，指定账号归属ID')
     args = parser.parse_args()
-    # A supplied password is useful for automated tests; do not put it on argv.
-    password = os.environ.get('STUDIO_SEED_PASSWORD') or getpass.getpass('请输入平台账号密码（输入不显示）：')
-    api = API(args.api_base, args.account, password)
+    if args.owner and not args.local:
+        parser.error('--owner 仅用于 --local 模式')
+    directory = Path(settings.DATASET_DIR).resolve().parent / 'seed-progress'
+    directory.mkdir(parents=True, exist_ok=True)
+    if args.local:
+        api = LocalAPI(args.api_base, local_owner(directory, args.owner))
+    else:
+        # A supplied password is useful for automated tests; do not put it on argv.
+        password = os.environ.get('STUDIO_SEED_PASSWORD') or getpass.getpass('请输入平台账号密码（输入不显示）：')
+        api = API(args.api_base, args.account, password)
     try:
         api.login()
-        print('平台身份验证成功。正在初始化账号 ' + args.account + ' 的案例…', flush=True)
-        directory = Path(settings.DATASET_DIR).resolve().parent / 'seed-progress'
-        directory.mkdir(parents=True, exist_ok=True)
+        print(('本地导入，复用账号归属 ' + api.owner if args.local else
+               '平台身份验证成功。正在初始化账号 ' + args.account) + ' 的案例…', flush=True)
         progress = directory / (CASE_ID + '-' + api.owner + '.json')
         # Serialize imports on the server, including simultaneous docker exec calls.
         import fcntl

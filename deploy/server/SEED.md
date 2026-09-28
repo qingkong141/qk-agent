@@ -9,6 +9,16 @@ docker exec -it aiot-agent python /tmp/seed_case.py --account admin
 ```
 
 按提示输入平台账号密码，输入时不显示。使用平台 SSO 验证身份，249/254 各自在当前环境账号下创建数据。
+
+已有导入进度时，可以在服务器容器内免平台登录继续导入：
+
+```bash
+docker cp /opt/agent/seed_case.py aiot-agent:/tmp/seed_case.py
+docker exec -it aiot-agent python /tmp/seed_case.py --local
+```
+
+此方式复用当前环境已验证账号的归属，不输入密码，也不调用SSO。脚本以容器内的服务器密钥生成仅在内存中使用的15分钟凭据，通过本机接口保留业务校验；没有开放免认证接口。账号不存在或已停用时停止。多个账号有进度时须按提示增加 `--owner 归属ID`，不会猜测账号。首次没有导入进度时仍需登录一次建立归属，不能仅凭“admin”名称推断平台身份。保留原有进度文件和服务器密钥，不需要重建镜像。
+
 模型管理中的八个华为云连接统一使用容器当前的 `OPENAI_API_BASE` 和 `OPENAI_API_KEY`，即全局 env 的 `AGENT_*` 映射值。
 修改全局 env 后先用 Compose up 更新容器，再执行本脚本。同名模型连接更新密钥，不重复添加；未自动验证每一个模型的计费权限。
 
