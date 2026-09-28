@@ -301,8 +301,7 @@ async def preview(item_id: str, file_id: str, db: DbSession, user: CurrentUser, 
     if item.modality == "text":
         lines = data.decode("utf-8-sig").splitlines()
         matches = [line for line in lines if not q or q.casefold() in line.casefold()]
-        start = (page - 1) * page_size
-        text = "\n".join(matches[start:start + page_size])
+        text = "\n".join(matches)
         return {"text": text[:20000], "total": len(matches), "truncated": len(text) > 20000}
     rows = await run_in_threadpool(read_rows, data, Path(item.name).suffix.lower())
     columns = list(dict.fromkeys(key for row in rows for key in row))

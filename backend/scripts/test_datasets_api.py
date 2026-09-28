@@ -73,6 +73,15 @@ async def main():
             assert rows["total"] == 1 and rows["rows"][0]["battery"] == 0
             text = (await call("GET", path + "/files/" + files[2]["id"] + "/preview?q=温度")).json()
             assert text["total"] == 1 and text["text"] == "设备温度正常"
+            content = '\n'.join(f'设备记录 {index}' for index in range(44))
+            note = (await call('POST', path + '/files', 201, data={'modality':'text'}, files={'file':('continuous.txt',content.encode())})).json()
+            preview_path = path + '/files/' + note['id'] + '/preview'
+            continuous = (await call('GET', preview_path + '?page=3&page_size=1')).json()
+            assert continuous['text'] == content and continuous['total'] == 44 and not continuous['truncated']
+            filtered = (await call('GET', preview_path + '?q=记录%204')).json()
+            assert filtered['text'].splitlines() == [f'设备记录 {index}' for index in [4,40,41,42,43]]
+            assert (await call('GET', preview_path + '?q=不存在')).json()['total'] == 0
+            await call('DELETE', path + '/files/' + note['id'])
             assert len((await call("GET", path + "/files?modality=sensor")).json()) == 1
             await call("DELETE", path, 409)
             for name, body, kind in [("bad.json", b'{bad}', "structured"), ("obj.json", b'{}', "sensor"),
