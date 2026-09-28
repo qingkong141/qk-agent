@@ -11,7 +11,7 @@ from unittest.mock import patch
 
 os.environ['DATABASE_URL']='sqlite+aiosqlite:///:memory:'
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]))
-from langchain_core.messages import AIMessage, HumanMessage
+from langchain_core.messages import AIMessage, AIMessageChunk, HumanMessage
 from pydantic import ValidationError
 from app.api import agent_studio as api
 
@@ -29,6 +29,15 @@ class Model:
     def __init__(self,total=7,batch=False,repeated=False,slow=False):
         self.total=total;self.batch=batch;self.repeated=repeated;self.slow=slow;self.count=0;self.seen=[];self.cancelled=asyncio.Event();self.waiting=asyncio.Event()
     def bind_tools(self,*args):return self
+    async def astream(self,messages):
+        result=await self.ainvoke(messages)
+        if result.tool_calls:
+            for index,call in enumerate(result.tool_calls):
+                args=json.dumps(call['args'])
+                yield AIMessageChunk(content='',tool_call_chunks=[{'name':call['name'],'args':args[:3],'id':call['id'],'index':index}])
+                yield AIMessageChunk(content='',tool_call_chunks=[{'name':None,'args':args[3:],'id':None,'index':index}])
+        else:
+            for char in result.content:yield AIMessageChunk(content=char)
     async def ainvoke(self,messages):
         self.seen.append(list(messages));self.count+=1
         if self.slow and self.count>1:
@@ -55,7 +64,9 @@ async def main():
         result=await execute(model,history=history,progress=progress)
         assert result['status']=='completed' and len(result['trace'])==7 and model.count==8
         assert [m.content for m in model.seen[0][1:]]==['设备编号为INF-031','已收到编号','继续查询']
-        assert [len(r['trace']) for r in seen]==list(range(1,8))
+        assert set(len(r['trace']) for r in seen)==set(range(8))
+        assert [r['answer'] for r in seen if r['answer']]==['完','完成']
+        assert any('lookup' in r.get('message','') for r in seen)
         # A final answer after exactly the allowed calls is still permitted.
         result=await execute(Model(total=2),config(max_tool_calls=2));assert result['status']=='completed'
         result=await execute(Model(total=4,batch=True),config(max_tool_calls=2))
@@ -70,7 +81,7 @@ async def main():
             response=await api.stream_run(config(),api.Debug(config=config(),question='查询设备'),None,{},SimpleNamespace(headers={}))
             stream=response.body_iterator
             assert json.loads(await anext(stream))['status']=='running'
-            assert len(json.loads(await anext(stream))['trace'])==1
+            while len(json.loads(await anext(stream))['trace'])<1:pass
             await asyncio.wait_for(slow.waiting.wait(),1)
             await stream.aclose()
             assert slow.cancelled.is_set()
@@ -103,7 +114,8 @@ async def main():
         with patch.object(api,'create_chat_model',lambda *args,**kwargs:Model(total=1)):
             response=await api.stream_run(config(),api.Debug(config=config(),question='查询设备'),None,{},SimpleNamespace(headers={}),revision=3)
             events=[json.loads(event) async for event in response.body_iterator if event.strip()]
-            assert [event['type'] for event in events]==['progress','progress','done']
+            assert events[0]['type']=='progress' and events[-1]['type']=='done'
+            assert [e['answer'] for e in events if e.get('answer')][:2]==['完','完成']
             assert events[-1]['revision']==3 and events[-1]['status']=='completed'
     print('PASS: configurable budgets, >6 calls and >4 rounds, conversation context, partial limits/timeouts, repeated calls, real task cancellation for model and MCP, ordered stream completion')
 

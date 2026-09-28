@@ -10,6 +10,7 @@ from types import SimpleNamespace
 os.environ["DATABASE_URL"] = "sqlite+aiosqlite:///:memory:"
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import httpx
+from langchain_core.messages import AIMessageChunk
 from fastapi import FastAPI
 from sqlalchemy import update
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
@@ -136,6 +137,25 @@ async def main():
             principal["external_user_id"] = ""
             await ask("first",400)
             principal["auth_type"] = "jwt"
+            async def stream_model(messages):
+                response=await respond(messages)
+                for start in range(0,len(response.content),3):
+                    yield AIMessageChunk(content=response.content[start:start+3])
+            insights.create_chat_model=lambda **kwargs:SimpleNamespace(astream=stream_model)
+            async def stream_ask(question,**extra):
+                response=await client.post('/studio/insights/ask-stream',json={'domain_id':domain['id'],'question':question,**extra})
+                assert response.status_code==200,response.text
+                return [json.loads(line) for line in response.text.splitlines() if line]
+            events=await stream_ask('first')
+            assert len([e for e in events if e['type']=='text'])>2
+            assert events[-1]['type']=='done' and events[-1]['data']['result']['rows']==first['result']['rows']
+            streamed=events[-1]['data']['thread']
+            assert (await call('GET','/studio/insights/threads/'+streamed['id']))['turn_count']==1
+            for q in ['malformed','write','unknown','offline']:
+                events=await stream_ask(q,thread_id=streamed['id'],expected_revision=1)
+                assert events[-1]['type']=='error' and not any(e['type']=='done' for e in events)
+            assert (await call('GET','/studio/insights/threads/'+streamed['id']))['revision']==1
+            print('PASS: streamed explanation, actual SQL result/chart, retained history and error events without saving invalid plans')
             await call("DELETE",path)
             await call("GET",path,404)
     await engine.dispose()

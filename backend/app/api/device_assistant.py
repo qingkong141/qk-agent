@@ -16,6 +16,7 @@ from app.dependencies import CurrentUser, DbSession
 from app.models.studio import StudioArtifact
 from app.services import device_assistant as service
 from app.services.realtime_engine import timestamp
+from app.services.assistant_stream import answer_stream
 
 router = APIRouter(prefix='/studio/device-assistant', tags=['device-assistant'])
 
@@ -94,6 +95,15 @@ async def history_rows(device_id, metric, minutes, db, user):
 
 @router.post('/ask')
 async def ask(data: Ask, db: DbSession, user: CurrentUser, request: Request):
+    return await answer(data, db, user, request)
+
+
+@router.post('/ask-stream')
+async def ask_stream(data: Ask, db: DbSession, user: CurrentUser, request: Request):
+    return answer_stream(lambda emit: answer(data, db, user, request, emit), db)
+
+
+async def answer(data, db, user, request, emit=None):
     if not data.question.strip(): raise HTTPException(400, '请输入问题')
     item = await owned(data.thread_id, 'device_chat', db, user) if data.thread_id else None
     if item and item.revision != data.expected_revision: raise HTTPException(409, '对话已更新，请重新打开')
@@ -102,10 +112,13 @@ async def ask(data: Ask, db: DbSession, user: CurrentUser, request: Request):
     directory = await catalog(db, user)
     history = [{'question': t['question'], 'answer': t['plan']['explanation'], 'executed': bool(t.get('execution'))} for t in turns]
     if len(json.dumps(directory, ensure_ascii=False)) > 60000: raise HTTPException(400, '产品目录内容过多，请缩小当前账号管理范围')
-    plan = await service.generate(data.question.strip(), directory, history, data.context.model_dump())
+    if emit: await emit({'type': 'progress', 'message': '正在理解问题，生成处理方案…'})
+    args = (data.question.strip(), directory, history, data.context.model_dump())
+    plan = await service.generate(*args, emit) if emit else await service.generate(*args)
     result = None
     if plan.action == 'create_device': await owned(plan.product_id, 'device_product', db, user)
     if plan.action in ('analyze', 'report'):
+        if emit: await emit({'type': 'progress', 'message': '正在校验设备与指标，读取相关数据…'})
         if data.context.source == 'platform':
             if plan.action == 'report': raise HTTPException(400, '平台报文上报接口尚未接入，请选择工作台设备')
             if not data.context.device_id or plan.device_id != data.context.device_id or plan.metric != data.context.metric:
@@ -120,6 +133,7 @@ async def ask(data: Ask, db: DbSession, user: CurrentUser, request: Request):
             await field_for(plan.device_id, plan.metric, db, user)
             rows = await history_rows(plan.device_id, plan.metric, plan.lookback_minutes, db, user) if plan.action == 'analyze' else []
         if plan.action == 'analyze': result = service.analyze(rows, plan.lower, plan.upper)
+    if emit: await emit({'type': 'progress', 'message': '正在整理结果并保存对话…'})
     turn = {'id': str(uuid.uuid4()), 'question': data.question.strip(), 'plan': plan.model_dump(), 'result': result,
             'context': data.context.model_dump(), 'time': datetime.now(timezone.utc).isoformat(), 'execution': None}
     config = {'turns': [*turns, turn]}

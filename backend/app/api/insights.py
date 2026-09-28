@@ -17,6 +17,7 @@ from app.dependencies import CurrentUser, DbSession
 from app.llm.factory import create_chat_model
 from app.models.data_model import DataModel, ThemeDomain
 from app.models.studio import StudioArtifact
+from app.services.assistant_stream import answer_stream, model_response
 
 router = APIRouter(prefix="/studio/insights", tags=["insights"])
 ZONE = timezone(timedelta(hours=8))
@@ -73,16 +74,17 @@ INSTRUCTIONS = """你是物联数据分析助手。根据用户问题、当前�
 统计按用户指定口径执行；记录数不等于设备数，设备数使用COUNT(DISTINCT设备编号)。均值不要把NULL当0；关联时注意维表是否一对一，避免重复统计。
 不要暗自只取少量源数据；只有用户要求前几名时添加LIMIT。后台最多返回500行，会明确标注截断。explanation描述如何查询，不要声称已经获得某个数值结果。
 这是后台查询模型绑定的数据文件，不是对实时设备运行状态的确认，也不是医疗诊断。
+explanation使用普通中文文本，可分段或使用数字序号；不要使用Markdown标题、星号加粗、反引号、代码块或竖线表格。图表和表格由页面组件展示，不要在explanation中重复绘制。
 """
 
 
-async def generate(question, catalog, history):
+async def generate(question, catalog, history, emit=None):
     context = [{"question": turn["question"], "explanation": turn["plan"]["explanation"], "tables": turn["plan"]["tables"]} for turn in history[-6:]]
     try:
-        result = await asyncio.wait_for(create_chat_model(streaming=False).ainvoke([
+        result = await asyncio.wait_for(model_response(create_chat_model(streaming=emit is not None), [
             SystemMessage(content=INSTRUCTIONS),
             HumanMessage(content=json.dumps({"now": datetime.now(ZONE).isoformat(), "catalog": catalog, "history": context, "question": question}, ensure_ascii=False)),
-        ]), timeout=60)
+        ], emit, structured=True, limit=16000), timeout=60)
     except asyncio.TimeoutError as error:
         raise HTTPException(504, "AI查询生成超时，请稍后重试") from error
     except Exception as error:
@@ -134,6 +136,15 @@ def info(item, full=True):
 
 @router.post("/ask")
 async def ask(data: AskInput, db: DbSession, user: CurrentUser):
+    return await answer(data, db, user)
+
+
+@router.post("/ask-stream")
+async def ask_stream(data: AskInput, db: DbSession, user: CurrentUser):
+    return answer_stream(lambda emit: answer(data, db, user, emit), db)
+
+
+async def answer(data, db, user, emit=None):
     await owned_entry(ThemeDomain, data.domain_id, db, user)
     item = await owned(data.thread_id, db, user) if data.thread_id else None
     if item and (item.revision != data.expected_revision or item.config["domain_id"] != data.domain_id):
@@ -149,9 +160,11 @@ async def ask(data: AskInput, db: DbSession, user: CurrentUser):
     if len(models) > 40 or len(json.dumps(catalog, ensure_ascii=False)) > 60000:
         raise HTTPException(400, "当前主题域模型过多，请在更小的主题域中提问")
     revisions = {model.id: model.revision for model in models}
-    plan = await generate(data.question, catalog, turns)
+    if emit: await emit({'type': 'progress', 'message': '正在理解问题，生成查询方案…'})
+    plan = await generate(data.question, catalog, turns, emit) if emit else await generate(data.question, catalog, turns)
     result, model_ids = None, []
     if plan.action == "query":
+        if emit: await emit({'type': 'progress', 'message': '正在校验查询并读取数据…'})
         by_table = {model.table_name: model for model in models}
         if any(table not in by_table for table in plan.tables):
             raise HTTPException(502, "AI选择了不可用的数据模型，请明确模型名称后重试")
@@ -164,6 +177,7 @@ async def ask(data: AskInput, db: DbSession, user: CurrentUser):
         sources = await sources_for(QueryInput(domain_id=data.domain_id, model_ids=model_ids, sql=plan.sql, row_limit=500), db, user)
         result = await execute_job(sources, sql=plan.sql, row_limit=500)
         plan.chart = Chart.model_validate(chart_for(plan, result))
+    if emit: await emit({'type': 'progress', 'message': '正在整理结果并保存对话…'})
     turn = {"id": str(uuid.uuid4()), "question": data.question, "plan": plan.model_dump(), "model_ids": model_ids, "created_at": datetime.now(ZONE).isoformat()}
     config = {"domain_id": data.domain_id, "turns": [*turns, turn]}
     if item:

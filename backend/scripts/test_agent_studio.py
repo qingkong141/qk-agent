@@ -74,7 +74,7 @@ async def main():
             assert (await client.request('DELETE',path,json={'expected_revision':2})).status_code==200
             assert (await client.post(base,json={'name':'bad','config':{**config,'model':'invented'}})).status_code==400
             assert (await client.post(base+'/debug',json={'config':{**config,'services':['unknown']},'question':'q'})).status_code==422
-            with patch.object(agent_models.settings,'SECRET_KEY','isolated-agent-model-key'),patch.object(agent_models,'chat_model',lambda item:Model()):
+            with patch.object(agent_models.settings,'SECRET_KEY','isolated-agent-model-key'),patch.object(agent_models,'chat_model',lambda item,**kwargs:Model()):
                 connection=await client.post('/api/v1/studio/agent-models',json={'name':'custom model','base_url':'https://model.example/v1','model':'custom-model','api_key':'isolated-key'})
                 assert connection.status_code==201,connection.text
                 custom={**config,'model':connection.json()['id']}
