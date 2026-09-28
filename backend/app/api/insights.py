@@ -14,6 +14,7 @@ from app.api.datasets import identity, scope
 from app.api.modeling import owned_entry
 from app.api.offline import QueryInput, sources_for, execute_job
 from app.dependencies import CurrentUser, DbSession
+from app.config import settings
 from app.llm.factory import create_chat_model
 from app.models.data_model import DataModel, ThemeDomain
 from app.models.studio import StudioArtifact
@@ -25,6 +26,7 @@ ZONE = timezone(timedelta(hours=8))
 
 class AskInput(BaseModel):
     domain_id: str
+    model: str | None = Field(default=None, min_length=1, max_length=150)
     question: str = Field(min_length=1, max_length=2000)
     thread_id: str | None = None
     expected_revision: int | None = Field(default=None, ge=1)
@@ -78,10 +80,10 @@ explanation使用普通中文文本，可分段或使用数字序号；不要使
 """
 
 
-async def generate(question, catalog, history, emit=None):
+async def generate(question, catalog, history, emit=None, *, chat=None):
     context = [{"question": turn["question"], "explanation": turn["plan"]["explanation"], "tables": turn["plan"]["tables"]} for turn in history[-6:]]
     try:
-        result = await asyncio.wait_for(model_response(create_chat_model(streaming=emit is not None), [
+        result = await asyncio.wait_for(model_response(chat if chat is not None else create_chat_model(streaming=emit is not None), [
             SystemMessage(content=INSTRUCTIONS),
             HumanMessage(content=json.dumps({"now": datetime.now(ZONE).isoformat(), "catalog": catalog, "history": context, "question": question}, ensure_ascii=False)),
         ], emit, structured=True, limit=16000), timeout=60)
@@ -128,7 +130,7 @@ async def owned(thread_id, db, user):
 
 
 def info(item, full=True):
-    data = {"id": item.id, "name": item.name, "domain_id": item.config["domain_id"], "revision": item.revision, "turn_count": len(item.config["turns"])}
+    data = {"id": item.id, "name": item.name, "domain_id": item.config["domain_id"], "revision": item.revision, "model": item.config.get("model"), "turn_count": len(item.config["turns"])}
     if full:
         data["turns"] = item.config["turns"]
     return data
@@ -161,7 +163,11 @@ async def answer(data, db, user, emit=None):
         raise HTTPException(400, "当前主题域模型过多，请在更小的主题域中提问")
     revisions = {model.id: model.revision for model in models}
     if emit: await emit({'type': 'progress', 'message': '正在理解问题，生成查询方案…'})
-    plan = await generate(data.question, catalog, turns, emit) if emit else await generate(data.question, catalog, turns)
+    options = {}
+    if data.model:
+        from app.api.agent_studio import selected_chat_model
+        options['chat'] = await selected_chat_model(data.model, db, user, streaming=emit is not None)
+    plan = await generate(data.question, catalog, turns, emit, **options) if emit else await generate(data.question, catalog, turns, **options)
     result, model_ids = None, []
     if plan.action == "query":
         if emit: await emit({'type': 'progress', 'message': '正在校验查询并读取数据…'})
@@ -178,8 +184,8 @@ async def answer(data, db, user, emit=None):
         result = await execute_job(sources, sql=plan.sql, row_limit=500)
         plan.chart = Chart.model_validate(chart_for(plan, result))
     if emit: await emit({'type': 'progress', 'message': '正在整理结果并保存对话…'})
-    turn = {"id": str(uuid.uuid4()), "question": data.question, "plan": plan.model_dump(), "model_ids": model_ids, "created_at": datetime.now(ZONE).isoformat()}
-    config = {"domain_id": data.domain_id, "turns": [*turns, turn]}
+    turn = {"id": str(uuid.uuid4()), "question": data.question, "plan": plan.model_dump(), "model_ids": model_ids, "model": data.model or settings.LLM_MODEL, "created_at": datetime.now(ZONE).isoformat()}
+    config = {"domain_id": data.domain_id, "turns": [*turns, turn], "model": data.model}
     if item:
         changed = await db.execute(update(StudioArtifact).where(StudioArtifact.id == item.id, StudioArtifact.revision == data.expected_revision, *scope(StudioArtifact, user)).values(config=config, revision=StudioArtifact.revision + 1))
         if changed.rowcount != 1:

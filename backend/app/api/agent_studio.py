@@ -63,6 +63,11 @@ async def valid_model(model,db,user):
     if model not in {m['id'] for m in await available_models()}: raise HTTPException(400,'选择的模型不在当前服务目录中')
 
 
+async def selected_chat_model(model,db,user,*,streaming=False):
+    connection=await valid_model(model,db,user)
+    return agent_models.chat_model(connection,streaming=streaming) if connection else create_chat_model(model,streaming=streaming)
+
+
 def info(item):
     return {'id':item.id,'name':item.name,'config':item.config,'revision':item.revision,'published_revision':item.published_revision}
 
@@ -154,6 +159,7 @@ class HistoryTurn(BaseModel):
 
 class Question(BaseModel):
     question:str=Field(min_length=1,max_length=2000)
+    model:str|None=Field(default=None,min_length=1,max_length=150)
     history:list[HistoryTurn]=Field(default_factory=list,max_length=8)
 
     @model_validator(mode='after')
@@ -165,6 +171,10 @@ class Question(BaseModel):
 
 class Debug(Question):
     config:Config
+
+
+def conversation_config(config,model):
+    return config.model_copy(update={'model':model}) if model else config
 
 
 def unpack(result):
@@ -285,23 +295,23 @@ async def stream_run(config,data,db,user,request,revision=None):
 
 @router.post('/debug')
 async def debug(data:Debug,db:DbSession,user:CurrentUser,request:Request):
-    return await safe_run(data.config,data.question,request.headers,db,user,data.history)
+    return await safe_run(conversation_config(data.config,data.model),data.question,request.headers,db,user,data.history)
 
 
 @router.post('/debug-stream')
 async def debug_stream(data:Debug,db:DbSession,user:CurrentUser,request:Request):
-    return await stream_run(data.config,data,db,user,request)
+    return await stream_run(conversation_config(data.config,data.model),data,db,user,request)
 
 
 @router.post('/{item_id}/invoke')
 async def invoke(item_id:str,data:Question,db:DbSession,user:CurrentUser,request:Request):
     item=await owned(item_id,db,user)
     if not item.published_revision: raise HTTPException(409,'智能体尚未发布或已停用')
-    return {'revision':item.published_revision,**await safe_run(Config.model_validate(item.published_config),data.question,request.headers,db,user,data.history)}
+    return {'revision':item.published_revision,**await safe_run(conversation_config(Config.model_validate(item.published_config),data.model),data.question,request.headers,db,user,data.history)}
 
 
 @router.post('/{item_id}/invoke-stream')
 async def invoke_stream(item_id:str,data:Question,db:DbSession,user:CurrentUser,request:Request):
     item=await owned(item_id,db,user)
     if not item.published_revision: raise HTTPException(409,'智能体尚未发布或已停用')
-    return await stream_run(Config.model_validate(item.published_config),data,db,user,request,item.published_revision)
+    return await stream_run(conversation_config(Config.model_validate(item.published_config),data.model),data,db,user,request,item.published_revision)

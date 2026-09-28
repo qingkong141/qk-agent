@@ -72,6 +72,7 @@ class Ask(BaseModel):
     thread_id: str | None = None
     expected_revision: int | None = None
     context: Context = Field(default_factory=Context)
+    model: str | None = Field(default=None, min_length=1, max_length=150)
 
 
 async def field_for(device_id, metric, db, user):
@@ -114,7 +115,11 @@ async def answer(data, db, user, request, emit=None):
     if len(json.dumps(directory, ensure_ascii=False)) > 60000: raise HTTPException(400, '产品目录内容过多，请缩小当前账号管理范围')
     if emit: await emit({'type': 'progress', 'message': '正在理解问题，生成处理方案…'})
     args = (data.question.strip(), directory, history, data.context.model_dump())
-    plan = await service.generate(*args, emit) if emit else await service.generate(*args)
+    options = {}
+    if data.model:
+        from app.api.agent_studio import selected_chat_model
+        options['chat'] = await selected_chat_model(data.model, db, user, streaming=emit is not None)
+    plan = await service.generate(*args, emit, **options) if emit else await service.generate(*args, **options)
     result = None
     if plan.action == 'create_device': await owned(plan.product_id, 'device_product', db, user)
     if plan.action in ('analyze', 'report'):
@@ -135,8 +140,8 @@ async def answer(data, db, user, request, emit=None):
         if plan.action == 'analyze': result = service.analyze(rows, plan.lower, plan.upper)
     if emit: await emit({'type': 'progress', 'message': '正在整理结果并保存对话…'})
     turn = {'id': str(uuid.uuid4()), 'question': data.question.strip(), 'plan': plan.model_dump(), 'result': result,
-            'context': data.context.model_dump(), 'time': datetime.now(timezone.utc).isoformat(), 'execution': None}
-    config = {'turns': [*turns, turn]}
+            'model': data.model or settings.LLM_MODEL, 'context': data.context.model_dump(), 'time': datetime.now(timezone.utc).isoformat(), 'execution': None}
+    config = {'turns': [*turns, turn], 'model': data.model}
     if item:
         changed = await db.execute(update(StudioArtifact).where(StudioArtifact.id == item.id, StudioArtifact.revision == data.expected_revision, *scope(StudioArtifact, user)).values(config=config, revision=StudioArtifact.revision+1))
         if changed.rowcount != 1: raise HTTPException(409, '对话已更新，请重新打开')
